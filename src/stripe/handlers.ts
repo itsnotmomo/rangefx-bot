@@ -5,6 +5,7 @@ import { createBillingPortalSession } from './checkout.js';
 import { config } from '../config/index.js';
 import { log } from '../util/logger.js';
 import { getUserByStripeCustomer, setStripeCustomerId, upsertUser } from '../services/users.js';
+import { markPaid } from '../services/funnel.js';
 import {
   getSubscriptionByStripeId,
   updateSubscriptionStatus,
@@ -94,6 +95,8 @@ async function handleCheckoutCompleted(api: Api, event: Stripe.Event): Promise<v
   const email = session.customer_details?.email ?? null;
   await ensureUser(telegramUserId, customerId, email);
   if (customerId) await setStripeCustomerId(telegramUserId, customerId);
+  // Funnel: converted. Cancels any scheduled follow-up touches.
+  await markPaid(telegramUserId);
 
   const subId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
   if (subId) {
@@ -123,6 +126,7 @@ async function handleInvoicePaid(api: Api, event: Stripe.Event): Promise<void> {
 
   await ensureUser(telegramUserId, customerId);
   await syncSubscription(telegramUserId, sub);
+  await markPaid(telegramUserId);
 
   // A previously past_due user who paid, or anyone missing a live grant, is
   // (re)granted access here so billing and access never drift apart.

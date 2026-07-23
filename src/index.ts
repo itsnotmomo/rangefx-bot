@@ -8,6 +8,7 @@ import { buildBot } from './bot/index.js';
 import { runtime } from './bot/runtime.js';
 import { createStripeWebhookHandler } from './stripe/webhook.js';
 import { scheduleGraceJob } from './jobs/grace-period.js';
+import { scheduleFollowupJob } from './jobs/followups.js';
 
 async function main(): Promise<void> {
   // 1. Schema first — safe/idempotent, so every deploy self-heals.
@@ -21,9 +22,9 @@ async function main(): Promise<void> {
 
   await bot.api.setMyCommands([
     { command: 'start', description: 'Start / main menu' },
-    { command: 'plans', description: 'View subscription plans' },
+    { command: 'plans', description: 'Join the desk' },
     { command: 'status', description: 'My subscription' },
-    { command: 'support', description: 'Support & FAQ' },
+    { command: 'support', description: 'Message the desk' },
   ]);
 
   // 3. HTTP server.
@@ -68,8 +69,9 @@ async function main(): Promise<void> {
     log.warn('PUBLIC_URL not set — Telegram webhook NOT registered. Set PUBLIC_URL (or rely on RAILWAY_PUBLIC_DOMAIN).');
   }
 
-  // 5. Daily grace-period job.
+  // 5. Cron jobs: daily grace-period reconciliation + lead follow-up delivery.
   scheduleGraceJob(bot.api);
+  scheduleFollowupJob(bot.api);
 
   // Graceful shutdown.
   const shutdown = async (signal: string) => {

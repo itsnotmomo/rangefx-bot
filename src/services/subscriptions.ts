@@ -89,6 +89,18 @@ export async function subscriptionStatusCounts(): Promise<Record<string, number>
   return out;
 }
 
+/** Active subscriptions grouped by plan key — used by /stats revenue lines. */
+export async function activeCountsByPlan(): Promise<Record<string, number>> {
+  const rows = await db
+    .select({ plan: subscriptions.plan, value: count() })
+    .from(subscriptions)
+    .where(eq(subscriptions.status, 'active'))
+    .groupBy(subscriptions.plan);
+  const out: Record<string, number> = {};
+  for (const r of rows) if (r.plan) out[r.plan] = r.value;
+  return out;
+}
+
 /**
  * Subscriptions stuck in `past_due` whose period ended more than `graceDays`
  * ago — candidates for removal by the grace-period job.

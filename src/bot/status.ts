@@ -40,7 +40,7 @@ export async function renderStatus(telegramUserId: bigint): Promise<RenderedStat
       text: [
         'You don’t have a subscription yet.',
         '',
-        'Choose a plan to join the members’ group.',
+        'Pick a plan to join the desk.',
       ].join('\n'),
       keyboard: plansKeyboard(),
     };
@@ -71,6 +71,10 @@ export async function renderStatus(telegramUserId: bigint): Promise<RenderedStat
     } catch {
       lines.push('', 'Billing portal is temporarily unavailable — try again shortly.');
     }
+  }
+  // Authorised members can always get a fresh single-use invite link.
+  if (hasAccess) {
+    keyboard.row().text('Get a fresh group invite', 'invite:fresh');
   }
   keyboard.row().text('« Back', 'menu:home');
 

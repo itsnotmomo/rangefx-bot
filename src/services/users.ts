@@ -9,6 +9,8 @@ export interface UpsertUserInput {
   email?: string | null;
   stripeCustomerId?: string | null;
   source?: 'legacy_import' | 'bot';
+  /** Deep-link payload from /start. Only the FIRST value ever seen is kept. */
+  acquisitionSource?: string | null;
 }
 
 /**
@@ -26,6 +28,7 @@ export async function upsertUser(input: UpsertUserInput): Promise<User> {
       email: input.email ?? null,
       stripeCustomerId: input.stripeCustomerId ?? null,
       source: input.source ?? 'bot',
+      acquisitionSource: input.acquisitionSource ?? null,
     })
     .onConflictDoUpdate({
       target: users.telegramUserId,
@@ -34,6 +37,8 @@ export async function upsertUser(input: UpsertUserInput): Promise<User> {
         firstName: sql`COALESCE(EXCLUDED.first_name, ${users.firstName})`,
         email: sql`COALESCE(EXCLUDED.email, ${users.email})`,
         stripeCustomerId: sql`COALESCE(EXCLUDED.stripe_customer_id, ${users.stripeCustomerId})`,
+        // Attribution: the FIRST source sticks — argument order is reversed on purpose.
+        acquisitionSource: sql`COALESCE(${users.acquisitionSource}, EXCLUDED.acquisition_source)`,
       },
     })
     .returning();

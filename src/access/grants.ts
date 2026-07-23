@@ -6,11 +6,29 @@ import { config } from '../config/index.js';
 import { log } from '../util/logger.js';
 import { recordEvent } from '../services/events.js';
 import { safeCall, safeSendMessage } from '../telegram/safe.js';
+import { GROUP_INVITE_DM } from '../bot/content.js';
 
 const RESOURCE_TYPE = 'telegram_group';
 
 function groupResourceId(): string {
   return config.groupChatId.toString();
+}
+
+/**
+ * Mint a single-use group invite link that expires in ~INVITE_EXPIRY_HOURS.
+ * Does NOT touch grants — used both when granting access and when re-issuing
+ * a link to an already-authorised member. Returns null if Telegram refused.
+ */
+export async function mintInviteLink(api: Api, telegramUserId: bigint, label: string): Promise<string | null> {
+  const expireDate = Math.floor(Date.now() / 1000) + config.inviteExpiryHours * 3600;
+  const linkResult = await safeCall('createChatInviteLink', () =>
+    api.createChatInviteLink(Number(config.groupChatId), {
+      member_limit: 1,
+      expire_date: expireDate,
+      name: `${label}:${telegramUserId}`,
+    }),
+  );
+  return linkResult.ok ? linkResult.value.invite_link : null;
 }
 
 /** Is there a live (not-yet-revoked) grant for this user on the group? */
@@ -46,15 +64,7 @@ export async function grantGroupAccess(
   reason: string,
   opts: { dm?: boolean } = { dm: true },
 ): Promise<string | null> {
-  const expireDate = Math.floor(Date.now() / 1000) + config.inviteExpiryHours * 3600;
-
-  const linkResult = await safeCall('createChatInviteLink', () =>
-    api.createChatInviteLink(Number(config.groupChatId), {
-      member_limit: 1,
-      expire_date: expireDate,
-      name: `grant:${telegramUserId}`,
-    }),
-  );
+  const inviteLink = await mintInviteLink(api, telegramUserId, 'grant');
 
   // Record the grant regardless of link/DM success — access is authorised now.
   await db.insert(accessGrants).values({
@@ -65,14 +75,13 @@ export async function grantGroupAccess(
   });
   await recordEvent({ type: 'access.granted', telegramUserId, payload: { reason } });
 
-  const inviteLink = linkResult.ok ? linkResult.value.invite_link : null;
   log.info('access granted', {
     event: 'access.granted',
     telegramUserId,
     resourceType: RESOURCE_TYPE,
     resourceId: groupResourceId(),
     reason,
-    inviteLinkCreated: linkResult.ok,
+    inviteLinkCreated: inviteLink !== null,
   });
 
   if (!inviteLink) {
@@ -81,18 +90,7 @@ export async function grantGroupAccess(
   }
 
   if (opts.dm !== false) {
-    const dm = await safeSendMessage(
-      api,
-      telegramUserId,
-      [
-        'You’re in.',
-        '',
-        'Here is your personal invite to the Range Compound group. It works once and expires in ' +
-          `${config.inviteExpiryHours} hours:`,
-        '',
-        inviteLink,
-      ].join('\n'),
-    );
+    const dm = await safeSendMessage(api, telegramUserId, GROUP_INVITE_DM(inviteLink, config.inviteExpiryHours));
     if (!dm.ok) {
       log.warn('could not DM invite link', { telegramUserId, blocked: dm.blocked });
     }

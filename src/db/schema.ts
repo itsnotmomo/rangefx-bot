@@ -2,6 +2,7 @@ import {
   bigint,
   boolean,
   index,
+  integer,
   pgTable,
   serial,
   text,
@@ -36,6 +37,13 @@ export const users = pgTable('users', {
   stripeCustomerId: text('stripe_customer_id'),
   /** 'legacy_import' | 'bot' — where the user record originated. */
   source: text('source').notNull().default('bot'),
+  /** Deep-link payload from the user's FIRST /start (e.g. 'website'); 'direct' if none. */
+  acquisitionSource: text('acquisition_source'),
+  // Funnel timestamps — each records the FIRST time the user hit that stage.
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  viewedPlansAt: timestamp('viewed_plans_at', { withTimezone: true }),
+  openedCheckoutAt: timestamp('opened_checkout_at', { withTimezone: true }),
+  paidAt: timestamp('paid_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   stripeCustomerIdx: index('users_stripe_customer_idx').on(t.stripeCustomerId),
@@ -97,6 +105,26 @@ export const events = pgTable('events', {
 }, (t) => ({
   stripeEventUnique: uniqueIndex('events_stripe_event_unique').on(t.stripeEventId),
   typeIdx: index('events_type_idx').on(t.type),
+}));
+
+/**
+ * Scheduled follow-up touches for users who viewed plans / opened checkout but
+ * haven't paid. One row per (user, stage); stage 1 = +1h, stage 2 = +24h.
+ * Unsent rows are deleted the moment the user pays — two touches maximum, ever.
+ */
+export const followups = pgTable('followups', {
+  id: serial('id').primaryKey(),
+  telegramUserId: bigint('telegram_user_id', { mode: 'bigint' })
+    .notNull()
+    .references(() => users.telegramUserId, { onDelete: 'cascade' }),
+  /** 1 (+1 hour) | 2 (+24 hours). */
+  stage: integer('stage').notNull(),
+  scheduledAt: timestamp('scheduled_at', { withTimezone: true }).notNull(),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  userStageUnique: uniqueIndex('followups_user_stage_unique').on(t.telegramUserId, t.stage),
+  dueIdx: index('followups_due_idx').on(t.scheduledAt),
 }));
 
 export type User = typeof users.$inferSelect;

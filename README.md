@@ -14,9 +14,10 @@ other groups) can reuse the same plumbing.
 
 | Concern | Table | Notes |
 | --- | --- | --- |
-| Identity | `users` | one row per Telegram account |
+| Identity + funnel | `users` | one row per Telegram account; first-touch funnel timestamps and `acquisition_source` |
 | Billing state | `subscriptions` | one row per Stripe subscription |
 | **Access** | `access_grants` | source of truth for "who's allowed into resource X"; decoupled from Stripe |
+| Lead follow-ups | `followups` | at most two scheduled touches per non-paying lead, then permanent silence |
 | Audit / idempotency | `events` | append-only; unique `stripe_event_id` gives webhook idempotency for free |
 
 The HTTP server exposes:
@@ -25,8 +26,28 @@ The HTTP server exposes:
 - `POST /telegram/<secret>` — Telegram webhook (secret token derived or set).
 - `GET /health` — health check for Railway.
 
-A daily cron (`GRACE_CRON`) reconciles `past_due` subscriptions: a warning DM on
-day 1, removal from the group once `GRACE_DAYS` have passed.
+Two cron jobs run inside the process:
+
+- `GRACE_CRON` (daily) reconciles `past_due` subscriptions: a warning DM on
+  day 1, removal from the group once `GRACE_DAYS` have passed.
+- `FOLLOWUP_CRON` (every 10 minutes) delivers lead follow-ups: a user who viewed
+  plans or opened checkout without paying gets one message at +1h and one at
+  +24h — two touches maximum, ever. Paying (or already holding access) cancels
+  anything pending.
+
+Support is a real relay: any plain text a user sends the bot is forwarded to
+every `ADMIN_USER_IDS` with name, id, and subscription status; admins answer
+with `/reply <telegram_user_id> <message>`. Both directions are logged in
+`events`.
+
+`/start` deep-link payloads (e.g. `t.me/<bot>?start=website`) are stored as
+`users.acquisition_source` on first start; `/stats` breaks down conversion by
+source.
+
+> **Copy sign-off:** all user-facing strings live in `src/bot/content.ts`.
+> `[ELIAS: ...]` markers flag every claim, figure, or positioning statement that
+> needs approval — they render verbatim to users until replaced, so treat any
+> remaining marker as a launch blocker.
 
 ## Local setup
 

@@ -1,16 +1,44 @@
 import { Bot, type Context } from 'grammy';
 import { config, PLANS, type PlanKey } from '../config/index.js';
 import { upsertUser, getUser } from '../services/users.js';
+import {
+  markOpenedCheckout,
+  markStarted,
+  markViewedPlans,
+  scheduleFollowups,
+} from '../services/funnel.js';
+import { recordEvent } from '../services/events.js';
 import { createCheckoutSession } from '../stripe/checkout.js';
-import { ABOUT, SUPPORT, WELCOME, plansText } from './content.js';
-import { backHome, checkoutButton, mainMenu, plansKeyboard } from './keyboards.js';
+import { priceDisplay } from '../stripe/prices.js';
+import {
+  CHECKOUT_MESSAGE,
+  FAQ_INTRO,
+  FAQ_ITEMS,
+  FRESH_INVITE,
+  PAYMENT_RETURN,
+  RESULTS,
+  SUPPORT,
+  WELCOME,
+  plansText,
+} from './content.js';
+import {
+  backHome,
+  checkoutButton,
+  faqAnswerKeyboard,
+  faqKeyboard,
+  mainMenu,
+  plansKeyboard,
+  resultsKeyboard,
+} from './keyboards.js';
 import { renderStatus } from './status.js';
 import { registerAdminCommands } from './admin.js';
+import { registerSupport } from './support.js';
+import { hasLiveGroupGrant, mintInviteLink } from '../access/grants.js';
 import { safeCall } from '../telegram/safe.js';
 import { log } from '../util/logger.js';
 
 /** Persist/refresh the interacting user's identity on every touch. */
-async function captureUser(ctx: Context): Promise<void> {
+async function captureUser(ctx: Context, acquisitionSource?: string): Promise<void> {
   const from = ctx.from;
   if (!from || from.is_bot) return;
   await upsertUser({
@@ -18,6 +46,7 @@ async function captureUser(ctx: Context): Promise<void> {
     telegramUsername: from.username ?? null,
     firstName: from.first_name ?? null,
     source: 'bot',
+    acquisitionSource: acquisitionSource ?? null,
   });
 }
 
@@ -30,6 +59,12 @@ async function editView(ctx: Context, text: string, keyboard: Parameters<Context
   }
 }
 
+/** Funnel touch: user is looking at plans — mark it and arm the follow-ups. */
+async function touchPlansFunnel(telegramUserId: bigint): Promise<void> {
+  await markViewedPlans(telegramUserId);
+  await scheduleFollowups(telegramUserId);
+}
+
 export function buildBot(): Bot {
   const bot = new Bot(config.botToken);
 
@@ -39,7 +74,18 @@ export function buildBot(): Bot {
   });
 
   bot.command('start', async (ctx) => {
-    await captureUser(ctx);
+    const payload = (ctx.match ?? '').toString().trim();
+    // 'paid'/'cancelled' are Stripe return deep links, not acquisition sources.
+    const isCheckoutReturn = payload === 'paid' || payload === 'cancelled';
+    const source = !payload || isCheckoutReturn ? 'direct' : payload.slice(0, 64);
+
+    await captureUser(ctx, source);
+    await markStarted(BigInt(ctx.from!.id));
+
+    if (payload === 'paid') {
+      await ctx.reply(PAYMENT_RETURN, { reply_markup: mainMenu() });
+      return;
+    }
     await ctx.reply(WELCOME, { reply_markup: mainMenu() });
   });
 
@@ -51,17 +97,13 @@ export function buildBot(): Bot {
 
   bot.command('plans', async (ctx) => {
     await captureUser(ctx);
+    await touchPlansFunnel(BigInt(ctx.from!.id));
     await ctx.reply(plansText(), { reply_markup: plansKeyboard() });
   });
 
   bot.command('support', async (ctx) => {
     await captureUser(ctx);
     await ctx.reply(SUPPORT, { reply_markup: backHome() });
-  });
-
-  bot.command('about', async (ctx) => {
-    await captureUser(ctx);
-    await ctx.reply(ABOUT, { reply_markup: backHome() });
   });
 
   // Admin-only commands (/stats, /broadcast) — self-gated to ADMIN_USER_IDS.
@@ -75,12 +117,29 @@ export function buildBot(): Bot {
 
   bot.callbackQuery('menu:plans', async (ctx) => {
     await ctx.answerCallbackQuery();
+    await captureUser(ctx);
+    await touchPlansFunnel(BigInt(ctx.from!.id));
     await editView(ctx, plansText(), { reply_markup: plansKeyboard() });
   });
 
-  bot.callbackQuery('menu:about', async (ctx) => {
+  bot.callbackQuery('menu:results', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await editView(ctx, ABOUT, { reply_markup: backHome() });
+    await editView(ctx, RESULTS, { reply_markup: resultsKeyboard() });
+  });
+
+  bot.callbackQuery('menu:faq', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    await editView(ctx, FAQ_INTRO, { reply_markup: faqKeyboard() });
+  });
+
+  bot.callbackQuery(/^faq:([a-z]+)$/, async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const item = FAQ_ITEMS.find((f) => f.id === ctx.match![1]);
+    if (!item) {
+      await editView(ctx, FAQ_INTRO, { reply_markup: faqKeyboard() });
+      return;
+    }
+    await editView(ctx, `${item.question}\n\n${item.answer}`, { reply_markup: faqAnswerKeyboard() });
   });
 
   bot.callbackQuery('menu:support', async (ctx) => {
@@ -95,23 +154,46 @@ export function buildBot(): Bot {
     await editView(ctx, text, { reply_markup: keyboard });
   });
 
+  // ---- Fresh invite for an already-authorised member ----
+  bot.callbackQuery('invite:fresh', async (ctx) => {
+    await ctx.answerCallbackQuery();
+    const telegramUserId = BigInt(ctx.from!.id);
+    if (!(await hasLiveGroupGrant(telegramUserId))) {
+      await editView(ctx, 'Your access isn’t active. Pick a plan to join the desk.', {
+        reply_markup: plansKeyboard(),
+      });
+      return;
+    }
+    const link = await mintInviteLink(bot.api, telegramUserId, 'reissue');
+    if (!link) {
+      await editView(ctx, 'Couldn’t create an invite just now. Try again in a moment.', {
+        reply_markup: backHome(),
+      });
+      return;
+    }
+    await recordEvent({ type: 'access.invite_reissued', telegramUserId });
+    await ctx.reply(FRESH_INVITE(link, config.inviteExpiryHours));
+  });
+
   // ---- Plan selection -> Stripe Checkout ----
   bot.callbackQuery(/^plan:(monthly|quarterly|annual)$/, async (ctx) => {
     const planKey = ctx.match![1] as PlanKey;
     await ctx.answerCallbackQuery();
     await captureUser(ctx);
     const telegramUserId = BigInt(ctx.from!.id);
+    await markOpenedCheckout(telegramUserId);
+    await scheduleFollowups(telegramUserId);
 
     try {
       const user = await getUser(telegramUserId);
-      const url = await createCheckoutSession(telegramUserId, planKey, user);
+      const plan = PLANS[planKey];
+      const [url, price] = await Promise.all([
+        createCheckoutSession(telegramUserId, planKey, user),
+        priceDisplay(plan.priceId),
+      ]);
       await editView(
         ctx,
-        [
-          `${PLANS[planKey].label} — ${PLANS[planKey].cadence}.`,
-          '',
-          'Continue to Stripe to complete payment. Your group invite is delivered here automatically once payment succeeds.',
-        ].join('\n'),
+        CHECKOUT_MESSAGE(plan.label, price, plan.cadence, config.inviteExpiryHours),
         { reply_markup: checkoutButton(url).row().text('« Back', 'menu:plans') },
       );
     } catch (err) {
@@ -121,6 +203,11 @@ export function buildBot(): Bot {
       });
     }
   });
+
+  // Support relay LAST: /reply plus the plain-text inbox. Registering the
+  // message:text handler after every command means only non-command text
+  // reaches it.
+  registerSupport(bot);
 
   return bot;
 }
