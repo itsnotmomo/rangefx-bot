@@ -1,0 +1,184 @@
+# Range Compound bot
+
+A Telegram subscription bot for **Range Compound**: Stripe handles billing,
+the bot gates access to a private Telegram group, and an access layer keeps
+"who is allowed in" decoupled from Stripe so future products (courses, ebooks,
+other groups) can reuse the same plumbing.
+
+- **Runtime:** Node ≥ 20, TypeScript (ESM), run directly with `tsx`.
+- **Framework:** [grammY](https://grammy.dev) (Telegram) + Express (webhooks).
+- **Billing:** Stripe Checkout + Billing Portal + webhooks.
+- **Storage:** Postgres via [Drizzle ORM](https://orm.drizzle.team).
+
+## Architecture at a glance
+
+| Concern | Table | Notes |
+| --- | --- | --- |
+| Identity | `users` | one row per Telegram account |
+| Billing state | `subscriptions` | one row per Stripe subscription |
+| **Access** | `access_grants` | source of truth for "who's allowed into resource X"; decoupled from Stripe |
+| Audit / idempotency | `events` | append-only; unique `stripe_event_id` gives webhook idempotency for free |
+
+The HTTP server exposes:
+
+- `POST /stripe/webhook` — Stripe events (raw body, signature-verified).
+- `POST /telegram/<secret>` — Telegram webhook (secret token derived or set).
+- `GET /health` — health check for Railway.
+
+A daily cron (`GRACE_CRON`) reconciles `past_due` subscriptions: a warning DM on
+day 1, removal from the group once `GRACE_DAYS` have passed.
+
+## Local setup
+
+1. **Install dependencies**
+
+   ```bash
+   npm install
+   ```
+
+2. **Configure environment**
+
+   ```bash
+   cp .env.example .env
+   ```
+
+   Fill in every required variable — see `.env.example` for the full list.
+   `config` validates them at startup, so a missing value fails fast. You'll
+   need a Telegram bot token (from [@BotFather](https://t.me/BotFather)), your
+   group's chat id, Stripe test keys + price ids, and a Postgres `DATABASE_URL`.
+
+3. **Provision Postgres and run migrations**
+
+   Point `DATABASE_URL` at any Postgres instance (local Docker, Railway, etc.).
+   Migrations are forward-only and idempotent:
+
+   ```bash
+   npm run migrate
+   ```
+
+   (Boot also runs migrations automatically, so every deploy self-heals.)
+
+4. **Run the bot**
+
+   ```bash
+   npm run dev     # tsx watch, reloads on change
+   # or
+   npm start       # one-off run
+   ```
+
+   Without a public HTTPS URL the Telegram webhook can't be registered. For
+   local development expose the port with a tunnel (e.g. `ngrok http 3000`) and
+   set `PUBLIC_URL` to the tunnel URL, or drive the bot through Railway.
+
+5. **Typecheck**
+
+   ```bash
+   npm run typecheck
+   ```
+
+## Importing legacy members
+
+Seed the database from a pre-bot member export. The CSV is **semicolon**-
+delimited with the columns:
+
+```
+date;userId;name;email;status;referredByAffiliateId
+```
+
+`userId` is the Telegram user id. A header row is optional (auto-detected).
+
+```bash
+npm run import-legacy -- ./path/to/legacy.csv
+```
+
+- Users are upserted on `telegram_user_id` with `source='legacy_import'`.
+- **Idempotent:** re-running never duplicates users or grants, never rewrites a
+  record's origin/creation date, and only fills blank profile fields.
+- Members whose status is `active`, `trialing`, or `past_due` receive a live
+  group access grant (recorded in `access_grants` + `events`). No invite links
+  are minted and no DMs are sent — these members are already in the group; the
+  grant just records their authorization so `/status` and the grace job behave.
+
+> `*.csv` is gitignored — keep member exports out of the repo.
+
+## Railway deploy
+
+The app is a single web service.
+
+1. **Create the project & Postgres**
+   - New Railway project → add a **PostgreSQL** plugin.
+   - Add your app service from this repo (GitHub or `railway up`).
+
+2. **Environment variables**
+   - Set every required variable from `.env.example` in the service's
+     **Variables** tab.
+   - Reference the database with `DATABASE_URL=${{Postgres.DATABASE_URL}}`.
+   - `PORT` is provided by Railway. `PUBLIC_URL` is derived automatically from
+     `RAILWAY_PUBLIC_DOMAIN`, so you can leave it unset once a public domain is
+     attached.
+
+3. **Networking**
+   - Under **Settings → Networking**, generate a public domain. This is what
+     lets the bot register its Telegram webhook and receive Stripe events.
+
+4. **Start command**
+   - Default `npm start` runs the server. Migrations run automatically on boot,
+     so no separate release step is required.
+
+5. **Deploy & verify**
+   - Deploy, then check the logs for `http server listening`,
+     `bot initialised`, and `telegram webhook registered`.
+   - `GET https://<your-domain>/health` should return `{"status":"ok"}`.
+
+To run the legacy import against the production database, use a Railway shell
+(or run locally with `DATABASE_URL` pointed at the Railway Postgres):
+
+```bash
+railway run npm run import-legacy -- ./legacy.csv
+```
+
+## Stripe webhook configuration
+
+1. **Create the endpoint**
+   - Stripe Dashboard → **Developers → Webhooks → Add endpoint**.
+   - URL: `https://<your-domain>/stripe/webhook`.
+
+2. **Select events**
+   The dispatcher (`src/stripe/handlers.ts`) handles exactly these — subscribe to
+   all five; any other delivered event is safely ignored:
+   - `checkout.session.completed`
+   - `invoice.paid`
+   - `invoice.payment_failed`
+   - `customer.subscription.updated`
+   - `customer.subscription.deleted`
+
+3. **Copy the signing secret**
+   - Reveal the endpoint's **Signing secret** (`whsec_...`) and set it as
+     `STRIPE_WEBHOOK_SECRET`. The webhook is verified against the **raw** request
+     body, so this must match exactly.
+
+4. **Price ids**
+   - Create three recurring prices (monthly / quarterly / annual) and set
+     `PRICE_MONTHLY`, `PRICE_QUARTERLY`, `PRICE_ANNUAL`. These map back to plan
+     keys when reconciling webhooks.
+
+5. **Local testing**
+   Use the Stripe CLI to forward events to your machine:
+
+   ```bash
+   stripe listen --forward-to localhost:3000/stripe/webhook
+   ```
+
+   The CLI prints a `whsec_...` secret — use it as `STRIPE_WEBHOOK_SECRET` while
+   testing locally.
+
+## Scripts
+
+| Command | What it does |
+| --- | --- |
+| `npm run dev` | Run with `tsx watch` (reloads on change) |
+| `npm start` | Run the server once |
+| `npm run build` | Typecheck via `tsc --noEmit` |
+| `npm run typecheck` | Same as build — no emit |
+| `npm run migrate` | Apply pending SQL migrations |
+| `npm run import-legacy -- <csv>` | Import legacy members (see above) |
