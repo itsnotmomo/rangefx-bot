@@ -85,19 +85,26 @@ delimited with the columns:
 date;userId;name;email;status;referredByAffiliateId
 ```
 
-`userId` is the Telegram user id. A header row is optional (auto-detected).
+`userId` is the Telegram user id. A header row is optional (auto-detected). The
+`status` column uses the InviteMember values `lead` / `customer` / `churned`.
 
 ```bash
 npm run import-legacy -- ./path/to/legacy.csv
+
+# Preview counts without writing anything (needs only the CSV — no env):
+npm run import-legacy -- --dry-run ./path/to/legacy.csv
 ```
 
 - Users are upserted on `telegram_user_id` with `source='legacy_import'`.
 - **Idempotent:** re-running never duplicates users or grants, never rewrites a
   record's origin/creation date, and only fills blank profile fields.
-- Members whose status is `active`, `trialing`, or `past_due` receive a live
-  group access grant (recorded in `access_grants` + `events`). No invite links
-  are minted and no DMs are sent — these members are already in the group; the
-  grant just records their authorization so `/status` and the grace job behave.
+- Only members with status `customer` receive a live group access grant
+  (recorded in `access_grants` + `events`). `lead` and `churned` are imported as
+  user records but get no grant. No invite links are minted and no DMs are sent —
+  paying members are already in the group; the grant just records their
+  authorization so `/status` and the grace job behave.
+- `--dry-run` reports rows read, valid ids, duplicates collapsed, invalid rows
+  skipped, and would-grant count — then exits without touching the database.
 
 > `*.csv` is gitignored — keep member exports out of the repo.
 
