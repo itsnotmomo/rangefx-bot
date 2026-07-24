@@ -44,6 +44,8 @@ export const users = pgTable('users', {
   viewedPlansAt: timestamp('viewed_plans_at', { withTimezone: true }),
   openedCheckoutAt: timestamp('opened_checkout_at', { withTimezone: true }),
   paidAt: timestamp('paid_at', { withTimezone: true }),
+  /** Set when a send hits a 403 (user blocked the bot); cleared on inbound activity. */
+  blockedAt: timestamp('blocked_at', { withTimezone: true }),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   stripeCustomerIdx: index('users_stripe_customer_idx').on(t.stripeCustomerId),
@@ -125,6 +127,22 @@ export const followups = pgTable('followups', {
 }, (t) => ({
   userStageUnique: uniqueIndex('followups_user_stage_unique').on(t.telegramUserId, t.stage),
   dueIdx: index('followups_due_idx').on(t.scheduledAt),
+}));
+
+/**
+ * Maps a forwarded support message (in an admin's chat) back to the user who
+ * wrote it, so admins can answer with a native Telegram reply instead of /reply.
+ */
+export const supportRoutes = pgTable('support_routes', {
+  id: serial('id').primaryKey(),
+  adminChatId: bigint('admin_chat_id', { mode: 'bigint' }).notNull(),
+  messageId: bigint('message_id', { mode: 'bigint' }).notNull(),
+  telegramUserId: bigint('telegram_user_id', { mode: 'bigint' })
+    .notNull()
+    .references(() => users.telegramUserId, { onDelete: 'cascade' }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  chatMsgUnique: uniqueIndex('support_routes_chat_msg_unique').on(t.adminChatId, t.messageId),
 }));
 
 export type User = typeof users.$inferSelect;

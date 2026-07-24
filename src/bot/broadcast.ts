@@ -1,8 +1,14 @@
 import { type Api } from 'grammy';
 import { config } from '../config/index.js';
-import { allUserIds } from '../services/users.js';
-import { safeSendMessage } from '../telegram/safe.js';
+import { markBlocked } from '../services/users.js';
+import { safeCall, safeSendMessage } from '../telegram/safe.js';
 import { log } from '../util/logger.js';
+
+export interface BroadcastContent {
+  text?: string;
+  photoFileId?: string;
+  caption?: string;
+}
 
 export interface BroadcastProgress {
   total: number;
@@ -13,38 +19,54 @@ export interface BroadcastProgress {
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
+/** How often onProgress fires (every N processed recipients, plus the last). */
+const PROGRESS_EVERY = 500;
+
 /**
- * Send `text` to every user, throttled to BROADCAST_PER_SECOND to stay within
- * Telegram's global limits. Each send is wrapped: a user who blocked the bot is
- * counted and skipped, never fatal. Built for the ~11.4k legacy list.
+ * Send `content` (text, or photo+caption) to the given recipients, throttled to
+ * BROADCAST_PER_SECOND (default ~25/s) to stay within Telegram's global limits.
  *
- * `onProgress` is called periodically so the caller can update a status message.
- * Returns the final tally.
+ * Each send is wrapped: a 403 marks the user blocked (users.blocked_at) so
+ * future broadcasts skip them; other failures are counted, never fatal. A 429's
+ * retry_after is respected before continuing.
  */
-export async function broadcast(
+export async function broadcastTo(
   api: Api,
-  text: string,
+  ids: bigint[],
+  content: BroadcastContent,
   onProgress?: (p: BroadcastProgress) => void,
 ): Promise<BroadcastProgress> {
-  const ids = await allUserIds();
   const delayMs = Math.max(0, Math.floor(1000 / Math.max(1, config.broadcastPerSecond)));
   const progress: BroadcastProgress = { total: ids.length, sent: 0, failed: 0, blocked: 0 };
 
-  log.info('broadcast started', { total: progress.total, perSecond: config.broadcastPerSecond });
+  log.info('broadcast started', {
+    total: progress.total,
+    perSecond: config.broadcastPerSecond,
+    kind: content.photoFileId ? 'photo' : 'text',
+  });
 
   for (let i = 0; i < ids.length; i++) {
-    const result = await safeSendMessage(api, ids[i]!, text);
+    const id = ids[i]!;
+    const result = content.photoFileId
+      ? await safeCall('sendPhoto', () =>
+          api.sendPhoto(Number(id), content.photoFileId!, { caption: content.caption }),
+        )
+      : await safeSendMessage(api, id, content.text ?? '');
+
     if (result.ok) {
       progress.sent++;
     } else if (result.blocked) {
       progress.blocked++;
+      await markBlocked(id);
     } else {
       progress.failed++;
-      // Respect a 429 by waiting out retry_after before continuing.
       if (result.retryAfter) await sleep(result.retryAfter * 1000);
     }
 
-    if (onProgress && (i % 50 === 0 || i === ids.length - 1)) onProgress(progress);
+    const processed = i + 1;
+    if (onProgress && (processed % PROGRESS_EVERY === 0 || processed === ids.length)) {
+      onProgress(progress);
+    }
     if (delayMs) await sleep(delayMs);
   }
 

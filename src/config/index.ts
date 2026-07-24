@@ -101,7 +101,7 @@ export const config = {
   inviteExpiryHours: intOf('INVITE_EXPIRY_HOURS', 24),
 
   // Broadcast throttling (Telegram allows ~30 msg/s globally to different users).
-  broadcastPerSecond: intOf('BROADCAST_PER_SECOND', 20),
+  broadcastPerSecond: intOf('BROADCAST_PER_SECOND', 25),
 
   nodeEnv: optional('NODE_ENV', 'development'),
 } as const;

@@ -2,22 +2,27 @@ import { type Bot } from 'grammy';
 import { config, isAdmin, PLANS, type PlanKey } from '../config/index.js';
 import { getLatestSubscription } from '../services/subscriptions.js';
 import { recordEvent } from '../services/events.js';
-import { safeSendMessage } from '../telegram/safe.js';
-import { SUPPORT_ACK } from './content.js';
+import { findSupportRoute, saveSupportRoute } from '../services/support.js';
+import { safeCall, safeSendMessage } from '../telegram/safe.js';
+import { t } from './content.js';
 import { log } from '../util/logger.js';
 
 /**
- * Real support relay. Any plain text a user sends the bot (private chat,
- * outside a command) is forwarded to every admin with enough context to answer:
- * name, username, telegram_user_id, and subscription status. Admins answer with
+ * Real support relay, both directions.
  *
- *     /reply <telegram_user_id> <message>
+ * User -> admins: any plain text a user sends the bot (private chat, outside a
+ * command) is forwarded to every admin with name, username, telegram_user_id,
+ * and subscription status. Each forwarded message is recorded in
+ * support_routes so it can be answered by reply.
  *
- * which the bot DMs to the user, confirming delivery back to the admin. Both
- * directions land in `events` (support.inbound / support.outbound).
+ * Admins -> user, two ways:
+ *   • Native Telegram reply to a forwarded message — routed automatically.
+ *     Feels like texting, not command-line.
+ *   • /reply <telegram_user_id> <message> — explicit fallback.
+ * Delivery is confirmed to the admin; both directions land in `events`.
  */
 export function registerSupport(bot: Bot): void {
-  // ---- Admin -> user -------------------------------------------------------
+  // ---- /reply fallback -------------------------------------------------------
   bot.command('reply', async (ctx) => {
     if (!ctx.from || !isAdmin(ctx.from.id)) return;
 
@@ -27,29 +32,31 @@ export function registerSupport(bot: Bot): void {
     const message = space === -1 ? '' : raw.slice(space + 1).trim();
 
     if (!/^\d+$/.test(idPart) || !message) {
-      await ctx.reply('Usage: /reply <telegram_user_id> <message>');
+      await ctx.reply('Usage: /reply <telegram_user_id> <message>\nTip: replying directly to a forwarded support message also works.');
       return;
     }
 
-    const target = BigInt(idPart);
-    const result = await safeSendMessage(bot.api, target, message);
-    if (result.ok) {
-      await recordEvent({
-        type: 'support.outbound',
-        telegramUserId: target,
-        payload: { admin: ctx.from.id, text: message },
-      });
-      await ctx.reply(`Delivered to ${idPart}.`);
-    } else {
-      await ctx.reply(
-        result.blocked
-          ? `Not delivered — ${idPart} has blocked the bot.`
-          : `Not delivered to ${idPart} (${result.error}).`,
-      );
-    }
+    await deliverReply(bot, ctx.from.id, BigInt(idPart), message, async (text) => {
+      await ctx.reply(text);
+    });
   });
 
-  // ---- User -> admins ------------------------------------------------------
+  // ---- Native reply routing (admin replies to a forwarded support message) ----
+  bot.on('message:text', async (ctx, next) => {
+    const from = ctx.from;
+    if (!from || !isAdmin(from.id) || ctx.chat.type !== 'private') return next();
+    const replyTo = ctx.message.reply_to_message;
+    if (!replyTo) return next();
+
+    const target = await findSupportRoute(ctx.chat.id, replyTo.message_id);
+    if (target === null) return next();
+
+    await deliverReply(bot, from.id, target, ctx.message.text, async (text) => {
+      await ctx.reply(text, { reply_parameters: { message_id: ctx.message.message_id } });
+    });
+  });
+
+  // ---- User -> admins ----------------------------------------------------------
   // Registered after every command handler, so only non-command text lands here.
   bot.on('message:text', async (ctx) => {
     if (ctx.chat.type !== 'private') return;
@@ -58,7 +65,7 @@ export function registerSupport(bot: Bot): void {
     const text = ctx.message.text.trim();
     // Unknown "/commands" are typos, not support messages.
     if (!text || text.startsWith('/')) return;
-    // Admins ARE the desk — nothing to relay.
+    // Admins ARE the desk — their plain text is not a support ticket.
     if (isAdmin(from.id)) return;
 
     const telegramUserId = BigInt(from.id);
@@ -67,19 +74,22 @@ export function registerSupport(bot: Bot): void {
     const statusLine = sub ? `${sub.status}${planLabel ? ` (${planLabel})` : ''}` : 'no subscription';
 
     const relay = [
-      '📨 Support message',
+      'Support message',
       `From: ${from.first_name ?? '—'}${from.username ? ` (@${from.username})` : ''} · id ${from.id}`,
       `Subscription: ${statusLine}`,
       '',
       text,
       '',
-      `Reply with: /reply ${from.id} <message>`,
+      `Reply to this message to answer, or /reply ${from.id} <message>.`,
     ].join('\n');
 
     let delivered = 0;
     for (const adminId of config.adminUserIds) {
-      const res = await safeSendMessage(bot.api, adminId, relay);
-      if (res.ok) delivered++;
+      const res = await safeCall('sendMessage', () => bot.api.sendMessage(Number(adminId), relay));
+      if (res.ok) {
+        delivered++;
+        await saveSupportRoute(adminId, res.value.message_id, telegramUserId);
+      }
     }
 
     await recordEvent({
@@ -93,6 +103,31 @@ export function registerSupport(bot: Bot): void {
       admins: config.adminUserIds.length,
     });
 
-    await ctx.reply(SUPPORT_ACK);
+    await ctx.reply(t('support.ack'));
   });
+}
+
+/** DM an admin's answer to the user, confirm to the admin, log the event. */
+async function deliverReply(
+  bot: Bot,
+  adminId: number,
+  target: bigint,
+  message: string,
+  confirm: (text: string) => Promise<void>,
+): Promise<void> {
+  const result = await safeSendMessage(bot.api, target, message);
+  if (result.ok) {
+    await recordEvent({
+      type: 'support.outbound',
+      telegramUserId: target,
+      payload: { admin: adminId, text: message },
+    });
+    await confirm(`Delivered to ${target}.`);
+  } else {
+    await confirm(
+      result.blocked
+        ? `Not delivered — ${target} has blocked the bot.`
+        : `Not delivered to ${target} (${result.error}).`,
+    );
+  }
 }

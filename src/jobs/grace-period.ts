@@ -7,7 +7,7 @@ import { getUser } from '../services/users.js';
 import { hasLiveGroupGrant, revokeGroupAccess } from '../access/grants.js';
 import { createBillingPortalSession } from '../stripe/checkout.js';
 import { safeSendMessage } from '../telegram/safe.js';
-import { ACCESS_REVOKED_DM, GRACE_WARNING_DM } from '../bot/content.js';
+import { t } from '../bot/content.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -42,7 +42,7 @@ export async function runGraceCheck(api: Api): Promise<void> {
       if (!(await hasLiveGroupGrant(telegramUserId))) continue; // already removed
       await revokeGroupAccess(api, telegramUserId, 'grace_period_expired', {
         dm: true,
-        notice: ACCESS_REVOKED_DM,
+        notice: t('dm.access_revoked'),
       });
       removed++;
       continue;
@@ -58,7 +58,7 @@ export async function runGraceCheck(api: Api): Promise<void> {
           log.warn('grace warning: portal session failed', { telegramUserId, error: err });
         }
       }
-      await safeSendMessage(api, telegramUserId, GRACE_WARNING_DM(portalUrl, config.graceDays));
+      await safeSendMessage(api, telegramUserId, t('dm.grace_warning', { portalUrl, days: config.graceDays }));
       warned++;
     }
   }

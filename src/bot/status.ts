@@ -4,22 +4,13 @@ import { getUser } from '../services/users.js';
 import { getLatestSubscription } from '../services/subscriptions.js';
 import { hasLiveGroupGrant } from '../access/grants.js';
 import { createBillingPortalSession } from '../stripe/checkout.js';
+import { statusLabel, t } from './content.js';
 import { billingButton, plansKeyboard } from './keyboards.js';
 
 function fmtDate(d: Date | null): string {
   if (!d) return 'unknown';
   return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
-
-const STATUS_LABEL: Record<string, string> = {
-  active: 'Active',
-  trialing: 'Trialing',
-  past_due: 'Payment failing',
-  canceled: 'Cancelled',
-  unpaid: 'Unpaid',
-  incomplete: 'Incomplete',
-  incomplete_expired: 'Expired',
-};
 
 export interface RenderedStatus {
   text: string;
@@ -36,32 +27,24 @@ export async function renderStatus(telegramUserId: bigint): Promise<RenderedStat
   const sub = await getLatestSubscription(telegramUserId);
 
   if (!sub) {
-    return {
-      text: [
-        'You don’t have a subscription yet.',
-        '',
-        'Pick a plan to join the desk.',
-      ].join('\n'),
-      keyboard: plansKeyboard(),
-    };
+    return { text: t('status.none'), keyboard: plansKeyboard() };
   }
 
   const planLabel = sub.plan ? PLANS[sub.plan as PlanKey]?.label ?? sub.plan : '—';
-  const statusLabel = STATUS_LABEL[sub.status] ?? sub.status;
   const hasAccess = await hasLiveGroupGrant(telegramUserId);
 
   const lines = [
-    'Your subscription',
+    t('status.header'),
     '',
-    `Plan: ${planLabel}`,
-    `Status: ${statusLabel}`,
+    t('status.plan_line', { plan: planLabel }),
+    t('status.status_line', { status: statusLabel(sub.status) }),
   ];
   if (sub.cancelAtPeriodEnd) {
-    lines.push(`Ends: ${fmtDate(sub.currentPeriodEnd)} (cancellation scheduled)`);
+    lines.push(t('status.ends_line', { date: fmtDate(sub.currentPeriodEnd) }));
   } else if (sub.currentPeriodEnd) {
-    lines.push(`Renews: ${fmtDate(sub.currentPeriodEnd)}`);
+    lines.push(t('status.renews_line', { date: fmtDate(sub.currentPeriodEnd) }));
   }
-  lines.push(`Group access: ${hasAccess ? 'active' : 'not active'}`);
+  lines.push(t('status.access_line', { state: t(hasAccess ? 'status.access.active' : 'status.access.inactive') }));
 
   let keyboard = new InlineKeyboard();
   if (user?.stripeCustomerId) {
@@ -69,14 +52,14 @@ export async function renderStatus(telegramUserId: bigint): Promise<RenderedStat
       const portalUrl = await createBillingPortalSession(user.stripeCustomerId);
       keyboard = billingButton(portalUrl);
     } catch {
-      lines.push('', 'Billing portal is temporarily unavailable — try again shortly.');
+      lines.push('', t('status.portal_unavailable'));
     }
   }
   // Authorised members can always get a fresh single-use invite link.
   if (hasAccess) {
-    keyboard.row().text('Get a fresh group invite', 'invite:fresh');
+    keyboard.row().text(t('kb.fresh_invite'), 'invite:fresh');
   }
-  keyboard.row().text('« Back', 'menu:home');
+  keyboard.row().text(t('kb.back'), 'menu:home');
 
   return { text: lines.join('\n'), keyboard };
 }

@@ -1,17 +1,35 @@
 import { type Bot, type Context } from 'grammy';
 import { isAdmin, PLANS } from '../config/index.js';
-import { countUsers } from '../services/users.js';
-import { activeCountsByPlan, subscriptionStatusCounts } from '../services/subscriptions.js';
+import { countUsers, searchUsers } from '../services/users.js';
+import { getLatestSubscription, activeCountsByPlan, subscriptionStatusCounts } from '../services/subscriptions.js';
 import { acquisitionBreakdown, funnelCounts } from '../services/funnel.js';
 import { formatAmount, getPrice } from '../stripe/prices.js';
-import { broadcast, type BroadcastProgress } from './broadcast.js';
-import { safeCall } from '../telegram/safe.js';
-import { log } from '../util/logger.js';
+import { type User } from '../db/schema.js';
+
+/** Gate: only ADMIN_USER_IDS may run these. Silently ignore everyone else. */
+function requireAdmin(ctx: Context): boolean {
+  const uid = ctx.from?.id;
+  return uid !== undefined && isAdmin(uid);
+}
 
 /** "12.5%" or an em-dash when the denominator is zero. */
 function pct(numerator: number, denominator: number): string {
   if (denominator <= 0) return '—';
   return `${((numerator / denominator) * 100).toFixed(1)}%`;
+}
+
+function fmtDate(d: Date | null): string {
+  if (!d) return '—';
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+/** The furthest funnel stage this user reached. */
+function funnelStage(u: User): string {
+  if (u.paidAt) return 'paid';
+  if (u.openedCheckoutAt) return 'opened checkout';
+  if (u.viewedPlansAt) return 'viewed plans';
+  if (u.startedAt) return 'started';
+  return '—';
 }
 
 /** Revenue per plan: active subscriptions × the plan's Stripe price. */
@@ -32,12 +50,6 @@ async function revenueLines(activeByPlan: Record<string, number>): Promise<strin
   return lines;
 }
 
-/** Gate: only ADMIN_USER_IDS may run these. Silently ignore everyone else. */
-function requireAdmin(ctx: Context): boolean {
-  const uid = ctx.from?.id;
-  return uid !== undefined && isAdmin(uid);
-}
-
 export function registerAdminCommands(bot: Bot): void {
   bot.command('stats', async (ctx) => {
     if (!requireAdmin(ctx)) return;
@@ -54,7 +66,7 @@ export function registerAdminCommands(bot: Bot): void {
     const totalSubs = Object.values(statuses).reduce((a, b) => a + b, 0);
 
     const lines = [
-      '📊 Range Compound — stats',
+      'Range Compound — stats',
       '',
       `Users (all sources): ${users}`,
       '',
@@ -84,43 +96,32 @@ export function registerAdminCommands(bot: Bot): void {
     await ctx.reply(lines.join('\n'));
   });
 
-  bot.command('broadcast', async (ctx) => {
+  bot.command('find', async (ctx) => {
     if (!requireAdmin(ctx)) return;
-    const text = (ctx.match ?? '').toString().trim();
-    if (!text) {
-      await ctx.reply('Usage: /broadcast <message>\n\nThe message is sent verbatim to every user.');
+    const query = (ctx.match ?? '').toString().trim();
+    if (!query) {
+      await ctx.reply('Usage: /find <username | telegram_id | name fragment>');
       return;
     }
 
-    const statusMsg = await ctx.reply('Starting broadcast…');
-    log.info('broadcast requested', { by: ctx.from?.id });
+    const found = await searchUsers(query);
+    if (found.length === 0) {
+      await ctx.reply(`No users match “${query}”.`);
+      return;
+    }
 
-    let lastEdit = 0;
-    const render = (p: BroadcastProgress) =>
-      `Broadcasting…\nSent: ${p.sent} · Blocked: ${p.blocked} · Failed: ${p.failed} · Total: ${p.total}`;
-
-    const final = await broadcast(bot.api, text, (p) => {
-      // Throttle status-message edits so we don't hit Telegram's edit limits.
-      const now = Date.now();
-      if (now - lastEdit < 3000) return;
-      lastEdit = now;
-      void safeCall('editBroadcastStatus', () =>
-        bot.api.editMessageText(statusMsg.chat.id, statusMsg.message_id, render(p)),
-      );
-    });
-
-    await safeCall('editBroadcastStatus', () =>
-      bot.api.editMessageText(
-        statusMsg.chat.id,
-        statusMsg.message_id,
+    const blocks: string[] = [];
+    for (const u of found) {
+      const sub = await getLatestSubscription(u.telegramUserId);
+      const plan = sub?.plan ? PLANS[sub.plan as keyof typeof PLANS]?.label ?? sub.plan : '—';
+      blocks.push(
         [
-          '✅ Broadcast complete.',
-          `Sent: ${final.sent}`,
-          `Blocked (bot blocked by user): ${final.blocked}`,
-          `Failed (other errors): ${final.failed}`,
-          `Total recipients: ${final.total}`,
+          `${u.firstName ?? '—'}${u.telegramUsername ? ` (@${u.telegramUsername})` : ''} · id ${u.telegramUserId}`,
+          `  status: ${sub?.status ?? 'none'} · plan: ${plan}`,
+          `  source: ${u.acquisitionSource ?? '—'} · joined: ${fmtDate(u.createdAt)} · funnel: ${funnelStage(u)}`,
         ].join('\n'),
-      ),
-    );
+      );
+    }
+    await ctx.reply(blocks.join('\n\n'));
   });
 }

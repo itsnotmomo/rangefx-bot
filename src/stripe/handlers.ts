@@ -13,11 +13,7 @@ import {
 } from '../services/subscriptions.js';
 import { grantGroupAccess, hasLiveGroupGrant, revokeGroupAccess } from '../access/grants.js';
 import { safeSendMessage } from '../telegram/safe.js';
-import {
-  ACCESS_REVOKED_DM,
-  CANCELLED_AT_PERIOD_END_DM,
-  PAST_DUE_DM,
-} from '../bot/content.js';
+import { t } from '../bot/content.js';
 
 function toDate(unixSeconds: number | null | undefined): Date | null {
   return unixSeconds ? new Date(unixSeconds * 1000) : null;
@@ -162,7 +158,7 @@ async function handlePaymentFailed(api: Api, event: Stripe.Event): Promise<void>
       log.warn('could not create portal session for past_due DM', { telegramUserId, error: err });
     }
   }
-  await safeSendMessage(api, telegramUserId, PAST_DUE_DM(portalUrl));
+  await safeSendMessage(api, telegramUserId, t('dm.past_due', { portalUrl }));
   log.info('subscription past_due', { telegramUserId, subId });
 }
 
@@ -184,7 +180,7 @@ async function handleSubscriptionUpdated(api: Api, event: Stripe.Event): Promise
 
   // Newly scheduled cancellation -> a plain heads-up (access continues for now).
   if (sub.cancel_at_period_end && !prev?.cancelAtPeriodEnd) {
-    await safeSendMessage(api, telegramUserId, CANCELLED_AT_PERIOD_END_DM(fmtDate(toDate(sub.current_period_end))));
+    await safeSendMessage(api, telegramUserId, t('dm.cancel_scheduled', { date: fmtDate(toDate(sub.current_period_end)) }));
   }
 
   // Recovered to active and somehow without a grant -> restore access.
@@ -210,7 +206,7 @@ async function handleSubscriptionDeleted(api: Api, event: Stripe.Event): Promise
 
   await revokeGroupAccess(api, telegramUserId, 'customer.subscription.deleted', {
     dm: true,
-    notice: ACCESS_REVOKED_DM,
+    notice: t('dm.access_revoked'),
   });
 }
 

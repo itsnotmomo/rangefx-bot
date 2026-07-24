@@ -7,6 +7,7 @@ import { pool } from './db/index.js';
 import { buildBot } from './bot/index.js';
 import { runtime } from './bot/runtime.js';
 import { createStripeWebhookHandler } from './stripe/webhook.js';
+import { safeCall } from './telegram/safe.js';
 import { scheduleGraceJob } from './jobs/grace-period.js';
 import { scheduleFollowupJob } from './jobs/followups.js';
 
@@ -20,12 +21,31 @@ async function main(): Promise<void> {
   runtime.botUsername = bot.botInfo.username;
   log.info('bot initialised', { username: runtime.botUsername, id: bot.botInfo.id });
 
-  await bot.api.setMyCommands([
+  // Command menus: users typing "/" see the public list; admins additionally
+  // see the admin tooling (registered per-chat for each ADMIN_USER_IDS).
+  const publicCommands = [
     { command: 'start', description: 'Start / main menu' },
-    { command: 'plans', description: 'Join the desk' },
+    { command: 'plans', description: 'Join The Compound' },
     { command: 'status', description: 'My subscription' },
+    { command: 'faq', description: 'Questions, answered' },
     { command: 'support', description: 'Message the desk' },
-  ]);
+    { command: 'results', description: 'The record' },
+  ];
+  const adminCommands = [
+    { command: 'stats', description: 'Funnel, revenue, acquisition' },
+    { command: 'broadcast', description: 'Message an audience' },
+    { command: 'reply', description: 'Answer a support message' },
+    { command: 'find', description: 'Look up a user' },
+  ];
+  await bot.api.setMyCommands(publicCommands);
+  for (const adminId of config.adminUserIds) {
+    // Per-chat scope fails if the admin never opened the bot — never fatal.
+    await safeCall('setMyCommands(admin)', () =>
+      bot.api.setMyCommands([...publicCommands, ...adminCommands], {
+        scope: { type: 'chat', chat_id: Number(adminId) },
+      }),
+    );
+  }
 
   // 3. HTTP server.
   const app = express();

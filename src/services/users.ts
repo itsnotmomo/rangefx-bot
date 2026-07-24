@@ -1,4 +1,4 @@
-import { count, eq, sql } from 'drizzle-orm';
+import { count, eq, ilike, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import { users, type User } from '../db/schema.js';
 
@@ -39,6 +39,8 @@ export async function upsertUser(input: UpsertUserInput): Promise<User> {
         stripeCustomerId: sql`COALESCE(EXCLUDED.stripe_customer_id, ${users.stripeCustomerId})`,
         // Attribution: the FIRST source sticks — argument order is reversed on purpose.
         acquisitionSource: sql`COALESCE(${users.acquisitionSource}, EXCLUDED.acquisition_source)`,
+        // Any upsert means we heard from/about them — they're not blocking us.
+        blockedAt: sql`NULL`,
       },
     })
     .returning();
@@ -68,4 +70,32 @@ export async function allUserIds(): Promise<bigint[]> {
 export async function countUsers(): Promise<number> {
   const [row] = await db.select({ value: count() }).from(users);
   return row?.value ?? 0;
+}
+
+/** A send bounced with 403 — remember it so broadcasts skip them from now on. */
+export async function markBlocked(telegramUserId: bigint): Promise<void> {
+  await db
+    .update(users)
+    .set({ blockedAt: sql`COALESCE(${users.blockedAt}, now())` })
+    .where(eq(users.telegramUserId, telegramUserId));
+}
+
+/**
+ * /find: exact id when the query is numeric, otherwise a case-insensitive
+ * fragment match on username (with or without @) or first name.
+ */
+export async function searchUsers(query: string, limit = 8): Promise<User[]> {
+  const q = query.trim().replace(/^@/, '');
+  if (!q) return [];
+  if (/^\d+$/.test(q)) {
+    const row = await getUser(BigInt(q));
+    return row ? [row] : [];
+  }
+  const fragment = `%${q}%`;
+  return db
+    .select()
+    .from(users)
+    .where(or(ilike(users.telegramUsername, fragment), ilike(users.firstName, fragment)))
+    .orderBy(users.telegramUserId)
+    .limit(limit);
 }

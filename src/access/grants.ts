@@ -6,7 +6,7 @@ import { config } from '../config/index.js';
 import { log } from '../util/logger.js';
 import { recordEvent } from '../services/events.js';
 import { safeCall, safeSendMessage } from '../telegram/safe.js';
-import { GROUP_INVITE_DM } from '../bot/content.js';
+import { t } from '../bot/content.js';
 
 const RESOURCE_TYPE = 'telegram_group';
 
@@ -90,7 +90,11 @@ export async function grantGroupAccess(
   }
 
   if (opts.dm !== false) {
-    const dm = await safeSendMessage(api, telegramUserId, GROUP_INVITE_DM(inviteLink, config.inviteExpiryHours));
+    const dm = await safeSendMessage(
+      api,
+      telegramUserId,
+      t('invite.dm', { hours: config.inviteExpiryHours, link: inviteLink }),
+    );
     if (!dm.ok) {
       log.warn('could not DM invite link', { telegramUserId, blocked: dm.blocked });
     }

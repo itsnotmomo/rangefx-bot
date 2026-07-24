@@ -36,18 +36,28 @@ Two cron jobs run inside the process:
   anything pending.
 
 Support is a real relay: any plain text a user sends the bot is forwarded to
-every `ADMIN_USER_IDS` with name, id, and subscription status; admins answer
-with `/reply <telegram_user_id> <message>`. Both directions are logged in
-`events`.
+every `ADMIN_USER_IDS` with name, id, and subscription status. Admins answer by
+**replying natively** to the forwarded message (routed via `support_routes`), or
+with `/reply <telegram_user_id> <message>` as a fallback. Both directions are
+logged in `events`.
+
+Admin tooling: `/stats` (funnel, revenue, acquisition), `/find <username | id |
+name>` (user lookup with plan, source, funnel stage), and an interactive
+`/broadcast` — audience picker with live counts (all / leads / churned /
+active), text or photo+caption, preview, confirm, throttled send with progress,
+and automatic exclusion of users who blocked the bot (`users.blocked_at`).
+`/cancel` aborts the flow at any step. Command menus are registered on boot:
+public commands for everyone, the admin set additionally scoped to each admin's
+chat.
 
 `/start` deep-link payloads (e.g. `t.me/<bot>?start=website`) are stored as
 `users.acquisition_source` on first start; `/stats` breaks down conversion by
 source.
 
-> **Copy sign-off:** all user-facing strings live in `src/bot/content.ts`.
-> `[ELIAS: ...]` markers flag every claim, figure, or positioning statement that
-> needs approval — they render verbatim to users until replaced, so treat any
-> remaining marker as a launch blocker.
+> **Copy:** all user-facing strings live in `src/bot/content.ts` behind a
+> `t(key)` helper (English dictionary; Italian can be added later without
+> touching handlers). Track-record figures mirror the stats section of
+> rangecompound.com — update both together, never one.
 
 ## Local setup
 

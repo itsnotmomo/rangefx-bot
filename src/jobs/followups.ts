@@ -9,7 +9,7 @@ import {
 import { hasLiveGroupGrant } from '../access/grants.js';
 import { recordEvent } from '../services/events.js';
 import { safeSendMessage } from '../telegram/safe.js';
-import { FOLLOWUP_1, FOLLOWUP_2 } from '../bot/content.js';
+import { t } from '../bot/content.js';
 import { plansKeyboard } from '../bot/keyboards.js';
 
 /**
@@ -38,7 +38,7 @@ export async function runFollowupCheck(api: Api): Promise<void> {
       continue;
     }
 
-    const text = f.stage === 1 ? FOLLOWUP_1 : FOLLOWUP_2;
+    const text = f.stage === 1 ? t('followup.1') : t('followup.2');
     const res = await safeSendMessage(api, f.telegramUserId, text, {
       reply_markup: plansKeyboard(),
     });
