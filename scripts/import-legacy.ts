@@ -1,23 +1,28 @@
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { parse } from 'csv-parse/sync';
-import { and, eq, isNull, sql } from 'drizzle-orm';
-import { accessGrants, events, users } from '../src/db/schema.js';
+import { sql } from 'drizzle-orm';
+import { users } from '../src/db/schema.js';
 import { log } from '../src/util/logger.js';
 
-// The DB pool and validated `config` each pull in every runtime env var at import
-// time. We load them lazily (only on a real run) so `--dry-run` works with just a
-// CSV — no BOT_TOKEN/Stripe keys/DATABASE_URL required. These `typeof import`
-// types are erased at compile time and do NOT trigger that runtime load.
+// The DB pool pulls in every runtime env var at import time. We load it lazily
+// (only on a real run) so `--dry-run` works with just a CSV — no BOT_TOKEN/
+// Stripe keys/DATABASE_URL required. This `typeof import` type is erased at
+// compile time and does NOT trigger that runtime load.
 type Db = (typeof import('../src/db/index.js'))['db'];
-type Config = (typeof import('../src/config/index.js'))['config'];
 
 /**
  * Legacy member import
  * --------------------
  * One-off (but safely repeatable) migration that seeds the `users` table from a
- * pre-bot export and grants live group access to members who were active at the
- * time of export.
+ * pre-bot InviteMember export.
+ *
+ * Policy: every imported user is functionally a LEAD. No access grants, no
+ * subscription rows, first_started_at stays null (so their first real /start
+ * notifies admins as a new user). The raw CSV status (lead / customer /
+ * churned) is preserved in users.legacy_status — purely informational, shown
+ * in /find and available for future broadcast segmentation. It has no
+ * behavioral effect anywhere.
  *
  * Input: a semicolon-delimited CSV with the columns
  *
@@ -33,27 +38,17 @@ type Config = (typeof import('../src/config/index.js'))['config'];
  *   • `source` and `created_at` are set ONLY on first insert, so a member who
  *     later signs up through the bot keeps their real origin, and re-runs don't
  *     rewrite history.
- *   • A live group grant is created at most once per member — we skip anyone who
- *     already holds one, so re-running adds no duplicate grants or audit events.
+ *   • `legacy_status` follows the CSV: a fresh non-null value wins (a newer
+ *     export reflects newer state), a blank never erases what we had.
  *
  * Usage:  npm run import-legacy -- [--dry-run] ./path/to/legacy.csv
  *
  * `--dry-run` parses the CSV and reports counts (rows read, valid ids, deduped,
- * would-grant) without touching the database — and without needing any runtime
- * env beyond the file itself.
+ * wouldGrant — always 0 under this policy) without touching the database — and
+ * without needing any runtime env beyond the file itself.
  */
 
-const RESOURCE_TYPE = 'telegram_group';
 const SOURCE = 'legacy_import';
-const GRANT_REASON = 'legacy_import';
-
-/**
- * Statuses (from the InviteMember export) that mean the member should currently
- * be inside the group. The export uses: `lead`, `customer`, `churned` — only a
- * paying `customer` receives group access. `lead`/`churned` are still imported
- * as user records but get no grant.
- */
-const ACTIVE_STATUSES = new Set(['customer']);
 
 /** Chunk size for batched multi-row upserts — keeps each statement well-bounded. */
 const CHUNK = 500;
@@ -74,8 +69,8 @@ interface CleanUser {
   telegramUserId: bigint;
   firstName: string | null;
   email: string | null;
-  status: string;
-  affiliate: string | null;
+  /** Raw CSV status, kept verbatim (lowercased) in users.legacy_status. */
+  legacyStatus: string | null;
   createdAt: Date;
 }
 
@@ -149,8 +144,7 @@ function dedupe(rows: LegacyRow[]): { users: CleanUser[]; skipped: number; dupli
       telegramUserId,
       firstName: cleanText(row.name),
       email: cleanText(row.email),
-      status: (row.status?.trim() || '').toLowerCase(),
-      affiliate: cleanText(row.referredByAffiliateId),
+      legacyStatus: cleanText(row.status)?.toLowerCase() ?? null,
       createdAt: parseDate(row.date),
     });
   }
@@ -169,6 +163,8 @@ function chunked<T>(items: T[], size: number): T[][] {
 /**
  * Upsert users in batches. On conflict we only fill blanks (COALESCE) and never
  * touch `source`/`created_at`, preserving the record's real origin and age.
+ * `legacy_status` is the one exception: a fresh non-null value wins, since a
+ * newer export reflects newer state.
  */
 async function importUsers(db: Db, clean: CleanUser[]): Promise<void> {
   let done = 0;
@@ -180,6 +176,7 @@ async function importUsers(db: Db, clean: CleanUser[]): Promise<void> {
           telegramUserId: u.telegramUserId,
           firstName: u.firstName,
           email: u.email,
+          legacyStatus: u.legacyStatus,
           source: SOURCE,
           createdAt: u.createdAt,
         })),
@@ -189,68 +186,12 @@ async function importUsers(db: Db, clean: CleanUser[]): Promise<void> {
         set: {
           firstName: sql`COALESCE(EXCLUDED.first_name, ${users.firstName})`,
           email: sql`COALESCE(EXCLUDED.email, ${users.email})`,
+          legacyStatus: sql`COALESCE(EXCLUDED.legacy_status, ${users.legacyStatus})`,
         },
       });
     done += batch.length;
     log.info('users upserted', { done, total: clean.length });
   }
-}
-
-/**
- * Grant live group access to active members who don't already hold one. We insert
- * grants directly (rather than via the bot's grantGroupAccess) because we must NOT
- * mint invite links or DM 11k people — these members are already in the group; the
- * grant simply records that they're authorised so /status and the grace job behave.
- */
-async function importGrants(db: Db, config: Config, clean: CleanUser[]): Promise<number> {
-  const resourceId = config.groupChatId.toString();
-
-  // One query up front for everyone who already has a live grant — avoids a
-  // per-row round trip and makes re-runs a no-op.
-  const existing = await db
-    .select({ id: accessGrants.telegramUserId })
-    .from(accessGrants)
-    .where(
-      and(
-        eq(accessGrants.resourceType, RESOURCE_TYPE),
-        eq(accessGrants.resourceId, resourceId),
-        isNull(accessGrants.revokedAt),
-      ),
-    );
-  const alreadyGranted = new Set(existing.map((r) => r.id.toString()));
-
-  const toGrant = clean.filter(
-    (u) => ACTIVE_STATUSES.has(u.status) && !alreadyGranted.has(u.telegramUserId.toString()),
-  );
-
-  let done = 0;
-  for (const batch of chunked(toGrant, CHUNK)) {
-    await db.transaction(async (tx) => {
-      await tx.insert(accessGrants).values(
-        batch.map((u) => ({
-          telegramUserId: u.telegramUserId,
-          resourceType: RESOURCE_TYPE,
-          resourceId,
-          reason: GRANT_REASON,
-          grantedAt: u.createdAt,
-        })),
-      );
-      await tx.insert(events).values(
-        batch.map((u) => ({
-          type: 'access.granted',
-          telegramUserId: u.telegramUserId,
-          payload: JSON.stringify({
-            reason: GRANT_REASON,
-            status: u.status,
-            referredByAffiliateId: u.affiliate,
-          }),
-        })),
-      );
-    });
-    done += batch.length;
-    log.info('grants created', { done, total: toGrant.length });
-  }
-  return toGrant.length;
 }
 
 async function main(): Promise<void> {
@@ -265,16 +206,13 @@ async function main(): Promise<void> {
   const rows = readRows(abs);
   const { users: clean, skipped, duplicates } = dedupe(rows);
 
-  // Members whose status would earn a grant (upper bound — the real import also
-  // skips anyone who already holds a live grant, which we can't know without the DB).
-  const wouldGrant = clean.filter((u) => ACTIVE_STATUSES.has(u.status)).length;
-
   log.info('rows parsed', {
     rawRows: rows.length,
     validIds: clean.length,
     skippedInvalid: skipped,
     duplicatesCollapsed: duplicates,
-    wouldGrant,
+    // Policy: imported users are leads — nothing is ever granted by import.
+    wouldGrant: 0,
   });
 
   if (dryRun) {
@@ -283,7 +221,7 @@ async function main(): Promise<void> {
       validIds: clean.length,
       duplicatesCollapsed: duplicates,
       skippedInvalid: skipped,
-      wouldGrant,
+      wouldGrant: 0,
     });
     return;
   }
@@ -293,19 +231,14 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Load the DB + config only now — this validates env and opens a pool.
-  const [{ db, pool }, { config }] = await Promise.all([
-    import('../src/db/index.js'),
-    import('../src/config/index.js'),
-  ]);
+  // Load the DB only now — this validates env and opens a pool.
+  const { db, pool } = await import('../src/db/index.js');
 
   try {
     await importUsers(db, clean);
-    const granted = await importGrants(db, config, clean);
-
     log.info('legacy import finished', {
       usersImported: clean.length,
-      grantsCreated: granted,
+      grantsCreated: 0,
       skippedInvalid: skipped,
       duplicatesCollapsed: duplicates,
     });

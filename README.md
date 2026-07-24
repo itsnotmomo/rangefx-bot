@@ -134,15 +134,18 @@ npm run import-legacy -- --dry-run ./path/to/legacy.csv
 ```
 
 - Users are upserted on `telegram_user_id` with `source='legacy_import'`.
-- **Idempotent:** re-running never duplicates users or grants, never rewrites a
-  record's origin/creation date, and only fills blank profile fields.
-- Only members with status `customer` receive a live group access grant
-  (recorded in `access_grants` + `events`). `lead` and `churned` are imported as
-  user records but get no grant. No invite links are minted and no DMs are sent —
-  paying members are already in the group; the grant just records their
-  authorization so `/status` and the grace job behave.
+- **Every imported user is a lead.** No access grants, no subscription rows,
+  `first_started_at` stays null — their first real `/start` notifies admins as
+  a new user, and they fall into the "leads" broadcast audience.
+- The raw CSV status (`lead` / `customer` / `churned`) is preserved verbatim in
+  `users.legacy_status` — purely informational (shown in `/find`, usable for
+  future segmentation), with no behavioral effect anywhere.
+- **Idempotent:** re-running never duplicates users, never rewrites a record's
+  origin/creation date, and only fills blank profile fields; `legacy_status`
+  alone is refreshed by a newer export.
 - `--dry-run` reports rows read, valid ids, duplicates collapsed, invalid rows
-  skipped, and would-grant count — then exits without touching the database.
+  skipped, and `wouldGrant` (always 0 under this policy) — then exits without
+  touching the database.
 
 > `*.csv` is gitignored — keep member exports out of the repo.
 

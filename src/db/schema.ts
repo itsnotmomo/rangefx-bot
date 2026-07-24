@@ -37,6 +37,11 @@ export const users = pgTable('users', {
   stripeCustomerId: text('stripe_customer_id'),
   /** 'legacy_import' | 'bot' — where the user record originated. */
   source: text('source').notNull().default('bot'),
+  /**
+   * Raw status from the legacy InviteMember export ('lead' | 'customer' |
+   * 'churned'). Purely informational — no behavioral effect anywhere.
+   */
+  legacyStatus: text('legacy_status'),
   /** Deep-link payload from the user's FIRST /start (e.g. 'website'); 'direct' if none. */
   acquisitionSource: text('acquisition_source'),
   // Funnel timestamps — each records the FIRST time the user hit that stage.

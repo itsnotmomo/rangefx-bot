@@ -114,11 +114,12 @@ export function registerAdminCommands(bot: Bot): void {
     for (const u of found) {
       const sub = await getLatestSubscription(u.telegramUserId);
       const plan = sub?.plan ? PLANS[sub.plan as keyof typeof PLANS]?.label ?? sub.plan : '—';
+      const legacy = u.legacyStatus ? ` · legacy: ${u.legacyStatus}` : '';
       blocks.push(
         [
           `${u.firstName ?? '—'}${u.telegramUsername ? ` (@${u.telegramUsername})` : ''} · id ${u.telegramUserId}`,
           `  status: ${sub?.status ?? 'none'} · plan: ${plan}`,
-          `  source: ${u.acquisitionSource ?? '—'} · joined: ${fmtDate(u.createdAt)} · funnel: ${funnelStage(u)}`,
+          `  source: ${u.acquisitionSource ?? '—'} · joined: ${fmtDate(u.createdAt)} · funnel: ${funnelStage(u)}${legacy}`,
         ].join('\n'),
       );
     }
