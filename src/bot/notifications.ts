@@ -1,4 +1,4 @@
-import { type Api } from 'grammy';
+import { InlineKeyboard, type Api } from 'grammy';
 import { config } from '../config/index.js';
 import { countUsers, getUser } from '../services/users.js';
 import { classifyUser } from '../services/audience.js';
@@ -130,6 +130,86 @@ async function buildReturningText(info: StartEventInfo): Promise<string> {
     `${subjectOf(info)} pressed /start`,
     `Status: ${status} · Source: ${user?.acquisitionSource ?? 'direct'}`,
   ].join('\n');
+}
+
+// ---------------------------------------------------------------------------
+// Revenue notifications — every money event DMs all admins. Deliberately
+// EXEMPT from the /start flood collapse: revenue events are rare and each one
+// matters. Toggled by NOTIFY_REVENUE, independent of NOTIFY_NEW_USERS.
+// ---------------------------------------------------------------------------
+
+export type RevenueEvent =
+  | { kind: 'new_member'; plan: string; amount: string | null; subId: string }
+  | { kind: 'renewal'; plan: string; amount: string | null; subId: string }
+  | { kind: 'cancel_scheduled'; plan: string; endsAt: string; subId: string }
+  | { kind: 'ended'; plan: string; subId: string }
+  | { kind: 'plan_change'; oldPlan: string; newPlan: string; subId: string }
+  | { kind: 'payment_failed'; plan: string; attempt: number; graceEnds: string; subId: string };
+
+/** Pure text builder — exported for testability. */
+export function revenueText(subjectFull: string, subjectShort: string, ev: RevenueEvent): string {
+  switch (ev.kind) {
+    case 'new_member':
+      return [
+        '💰 New member',
+        `${subjectFull} just subscribed — ${ev.plan}${ev.amount ? `, ${ev.amount}` : ''}`,
+      ].join('\n');
+    case 'renewal':
+      return `🔄 Renewal — ${subjectShort}, ${ev.plan}${ev.amount ? `, ${ev.amount}` : ''}`;
+    case 'cancel_scheduled':
+      return [`⚠️ Cancellation scheduled — ${subjectShort}, ${ev.plan}`, `Access ends ${ev.endsAt}`].join('\n');
+    case 'ended':
+      return `❌ Membership ended — ${subjectShort}, ${ev.plan}`;
+    case 'plan_change':
+      return `🔁 Plan change — ${subjectShort}: ${ev.oldPlan} → ${ev.newPlan}`;
+    case 'payment_failed':
+      return [
+        `🚨 Payment failed — ${subjectShort}, ${ev.plan}, attempt ${ev.attempt}`,
+        `Grace ends ${ev.graceEnds}`,
+      ].join('\n');
+  }
+}
+
+function revenueKeyboard(telegramUserId: bigint, ev: RevenueEvent): InlineKeyboard {
+  const kb = new InlineKeyboard().url(
+    '🔗 View in Stripe',
+    `https://dashboard.stripe.com/subscriptions/${ev.subId}`,
+  );
+  if (ev.kind === 'new_member') {
+    kb.text('👤 Find user', `admin:find:${telegramUserId}`);
+  }
+  return kb;
+}
+
+/**
+ * DM a money event to every admin. Call fire-and-forget AFTER all user-facing
+ * handling completes — a failure here must never affect webhook processing or
+ * user messages.
+ */
+export async function notifyRevenue(api: Api, telegramUserId: bigint, ev: RevenueEvent): Promise<void> {
+  if (!config.notifyRevenue) return;
+
+  const user = await getUser(telegramUserId);
+  const name = user?.firstName ?? null;
+  const username = user?.telegramUsername ?? null;
+  const subjectShort = username ? `@${username}` : name ?? `id ${telegramUserId}`;
+  const subjectFull = username ? `@${username}${name ? ` (${name})` : ''}` : name ?? `id ${telegramUserId}`;
+
+  const text = revenueText(subjectFull, subjectShort, ev);
+  const keyboard = revenueKeyboard(telegramUserId, ev);
+
+  let delivered = 0;
+  for (const adminId of config.adminUserIds) {
+    const res = await safeSendMessage(api, adminId, text, { reply_markup: keyboard });
+    if (res.ok) delivered++;
+  }
+
+  await recordEvent({
+    type: 'notify.revenue',
+    telegramUserId,
+    payload: { ...ev, deliveredToAdmins: delivered },
+  });
+  log.info('revenue notification sent', { kind: ev.kind, telegramUserId, deliveredToAdmins: delivered });
 }
 
 /** Once a minute in summary mode: report the batch, exit when the flood ebbs. */

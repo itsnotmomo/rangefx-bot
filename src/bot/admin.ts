@@ -113,20 +113,33 @@ export function registerAdminCommands(bot: Bot): void {
     }
 
     const blocks: string[] = [];
-    for (const u of found) {
-      const sub = await getLatestSubscription(u.telegramUserId);
-      const plan = sub?.plan ? PLANS[sub.plan as keyof typeof PLANS]?.label ?? sub.plan : '—';
-      const legacy =
-        (u.legacyStatus ? ` · legacy: ${u.legacyStatus}` : '') +
-        (u.legacyAffiliateId ? ` · affiliate: ${u.legacyAffiliateId}` : '');
-      blocks.push(
-        [
-          `${u.firstName ?? '—'}${u.telegramUsername ? ` (@${u.telegramUsername})` : ''} · id ${u.telegramUserId}`,
-          `  status: ${sub?.status ?? 'none'} · plan: ${plan}`,
-          `  source: ${u.acquisitionSource ?? '—'} · joined: ${fmtDate(u.createdAt)} · funnel: ${funnelStage(u)}${legacy}`,
-        ].join('\n'),
-      );
-    }
+    for (const u of found) blocks.push(await userCard(u));
     await ctx.reply(blocks.join('\n\n'));
   });
+
+  // "👤 Find user" button on revenue notifications — same card as /find.
+  bot.callbackQuery(/^admin:find:(\d+)$/, async (ctx) => {
+    if (!requireAdmin(ctx)) return void (await ctx.answerCallbackQuery());
+    await ctx.answerCallbackQuery();
+    const found = await searchUsers(ctx.match![1]!);
+    if (found.length === 0) {
+      await ctx.reply(`No user with id ${ctx.match![1]}.`);
+      return;
+    }
+    await ctx.reply(await userCard(found[0]!));
+  });
+}
+
+/** One /find result block for a user. */
+async function userCard(u: User): Promise<string> {
+  const sub = await getLatestSubscription(u.telegramUserId);
+  const plan = sub?.plan ? PLANS[sub.plan as keyof typeof PLANS]?.label ?? sub.plan : '—';
+  const legacy =
+    (u.legacyStatus ? ` · legacy: ${u.legacyStatus}` : '') +
+    (u.legacyAffiliateId ? ` · affiliate: ${u.legacyAffiliateId}` : '');
+  return [
+    `${u.firstName ?? '—'}${u.telegramUsername ? ` (@${u.telegramUsername})` : ''} · id ${u.telegramUserId}`,
+    `  status: ${sub?.status ?? 'none'} · plan: ${plan}`,
+    `  source: ${u.acquisitionSource ?? '—'} · joined: ${fmtDate(u.createdAt)} · funnel: ${funnelStage(u)}${legacy}`,
+  ].join('\n');
 }

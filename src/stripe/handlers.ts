@@ -2,7 +2,9 @@ import type Stripe from 'stripe';
 import { type Api } from 'grammy';
 import { stripe } from './client.js';
 import { createBillingPortalSession } from './checkout.js';
-import { PLANS, PRICE_ID_TO_PLAN } from '../config/index.js';
+import { config, PLANS, PRICE_ID_TO_PLAN } from '../config/index.js';
+import { formatAmount } from './prices.js';
+import { notifyRevenue, type RevenueEvent } from '../bot/notifications.js';
 import { log } from '../util/logger.js';
 import { getUserByStripeCustomer, setStripeCustomerId, upsertUser } from '../services/users.js';
 import { markPaid } from '../services/funnel.js';
@@ -23,6 +25,29 @@ import {
 
 function toDate(unixSeconds: number | null | undefined): Date | null {
   return unixSeconds ? new Date(unixSeconds * 1000) : null;
+}
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Human plan label from a stored plan key; falls back to the raw value. */
+function planLabelOf(key: string | null | undefined): string {
+  return key ? PLANS[key as keyof typeof PLANS]?.label ?? key : '—';
+}
+
+/** Cents + currency -> "€79", or null when either is missing. */
+function moneyOf(amountCents: number | null | undefined, currency: string | null | undefined): string | null {
+  if (amountCents == null || !currency) return null;
+  return formatAmount(amountCents / 100, currency);
+}
+
+/**
+ * Fire-and-forget admin revenue DM. Called AFTER all user-facing handling —
+ * a failure here never affects webhook processing or user messages.
+ */
+function fireRevenue(api: Api, telegramUserId: bigint, ev: RevenueEvent): void {
+  void notifyRevenue(api, telegramUserId, ev).catch((err) =>
+    log.error('revenue notification failed', { kind: ev.kind, telegramUserId, error: err }),
+  );
 }
 
 function fmtDate(d: Date | null): string {
@@ -101,13 +126,26 @@ async function handleCheckoutCompleted(api: Api, event: Stripe.Event): Promise<v
   await markPaid(telegramUserId);
 
   const subId = typeof session.subscription === 'string' ? session.subscription : session.subscription?.id;
+  let sub: Stripe.Subscription | null = null;
   if (subId) {
-    const sub = await stripe.subscriptions.retrieve(subId);
+    sub = await stripe.subscriptions.retrieve(subId);
     await syncSubscription(telegramUserId, sub);
   }
 
   // Grant access (mints a single-use invite link + DMs it + records the grant).
   await grantGroupAccess(api, telegramUserId, 'checkout.session.completed');
+
+  // 💰 New member — after all user-facing handling.
+  if (subId && sub) {
+    const priceId = sub.items.data[0]?.price.id ?? null;
+    const planKey = priceId ? PRICE_ID_TO_PLAN[priceId] : undefined;
+    fireRevenue(api, telegramUserId, {
+      kind: 'new_member',
+      plan: planLabelOf(planKey ?? session.metadata?.plan),
+      amount: moneyOf(session.amount_total, session.currency),
+      subId,
+    });
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -136,6 +174,19 @@ async function handleInvoicePaid(api: Api, event: Stripe.Event): Promise<void> {
     if (!(await hasLiveGroupGrant(telegramUserId))) {
       await grantGroupAccess(api, telegramUserId, 'invoice.paid');
     }
+  }
+
+  // 🔄 Renewal — only billing cycles, never the first invoice (that's the
+  // new-member notification) or plan-change proration invoices.
+  if (invoice.billing_reason === 'subscription_cycle') {
+    const priceId = sub.items.data[0]?.price.id ?? null;
+    const planKey = priceId ? PRICE_ID_TO_PLAN[priceId] : undefined;
+    fireRevenue(api, telegramUserId, {
+      kind: 'renewal',
+      plan: planLabelOf(planKey),
+      amount: moneyOf(invoice.amount_paid, invoice.currency),
+      subId,
+    });
   }
 }
 
@@ -169,6 +220,18 @@ async function handlePaymentFailed(api: Api, event: Stripe.Event): Promise<void>
     reply_markup: updateCardKeyboard(portalUrl),
   });
   log.info('subscription past_due', { telegramUserId, subId });
+
+  // 🚨 Admin heads-up — after the user-facing message. Grace deadline mirrors
+  // the grace job: period end (or now, if unknown) + grace days.
+  const dbSub = await getSubscriptionByStripeId(subId);
+  const graceBase = dbSub?.currentPeriodEnd ?? new Date();
+  fireRevenue(api, telegramUserId, {
+    kind: 'payment_failed',
+    plan: planLabelOf(dbSub?.plan),
+    attempt: invoice.attempt_count ?? 1,
+    graceEnds: fmtDate(new Date(graceBase.getTime() + config.graceDays * DAY_MS)),
+    subId,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -187,16 +250,24 @@ async function handleSubscriptionUpdated(api: Api, event: Stripe.Event): Promise
   const prev = await getSubscriptionByStripeId(sub.id);
   await syncSubscription(telegramUserId, sub);
 
+  const newPriceId = sub.items.data[0]?.price.id ?? null;
+  const newPlanKey = newPriceId ? PRICE_ID_TO_PLAN[newPriceId] : undefined;
+
   // Newly scheduled cancellation -> confirmation (access continues for now).
   if (sub.cancel_at_period_end && !prev?.cancelAtPeriodEnd) {
     await safeSendMessage(api, telegramUserId, t('dm.cancel_scheduled', { date: fmtDate(toDate(sub.current_period_end)) }), {
       reply_markup: cancelScheduledKeyboard(),
     });
+    // ⚠️ Admin heads-up — after the user-facing message.
+    fireRevenue(api, telegramUserId, {
+      kind: 'cancel_scheduled',
+      plan: planLabelOf(newPlanKey ?? prev?.plan),
+      endsAt: fmtDate(toDate(sub.current_period_end)),
+      subId: sub.id,
+    });
   }
 
   // Immediate plan change -> confirmation with the new plan and next payment.
-  const newPriceId = sub.items.data[0]?.price.id ?? null;
-  const newPlanKey = newPriceId ? PRICE_ID_TO_PLAN[newPriceId] : undefined;
   if (prev?.plan && newPlanKey && prev.plan !== newPlanKey) {
     const plan = PLANS[newPlanKey];
     await safeSendMessage(
@@ -209,6 +280,13 @@ async function handleSubscriptionUpdated(api: Api, event: Stripe.Event): Promise
       }),
       { reply_markup: planChangedKeyboard() },
     );
+    // 🔁 Admin heads-up — after the user-facing message.
+    fireRevenue(api, telegramUserId, {
+      kind: 'plan_change',
+      oldPlan: planLabelOf(prev.plan),
+      newPlan: plan.label,
+      subId: sub.id,
+    });
   }
 
   // Scheduled plan change (billing portal "switch at period end" attaches a
@@ -264,6 +342,15 @@ async function handleSubscriptionDeleted(api: Api, event: Stripe.Event): Promise
     dm: true,
     notice: t('dm.access_revoked'),
     noticeKeyboard: accessRemovedKeyboard(),
+  });
+
+  // ❌ Admin heads-up — after the user-facing handling.
+  const priceId = sub.items.data[0]?.price.id ?? null;
+  const planKey = priceId ? PRICE_ID_TO_PLAN[priceId] : undefined;
+  fireRevenue(api, telegramUserId, {
+    kind: 'ended',
+    plan: planLabelOf(planKey),
+    subId: sub.id,
   });
 }
 

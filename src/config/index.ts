@@ -92,6 +92,12 @@ export const config = {
    */
   notifyNewUsers: boolOf('NOTIFY_NEW_USERS', true),
 
+  /**
+   * DM admins on every money event (new member, renewal, cancellation,
+   * ended, plan change, payment failure). Independent of NOTIFY_NEW_USERS.
+   */
+  notifyRevenue: boolOf('NOTIFY_REVENUE', true),
+
   nodeEnv: optional('NODE_ENV', 'development'),
 } as const;
 
