@@ -8,12 +8,17 @@ import { hasLiveGroupGrant, revokeGroupAccess } from '../access/grants.js';
 import { createBillingPortalSession } from '../stripe/checkout.js';
 import { safeSendMessage } from '../telegram/safe.js';
 import { t } from '../bot/content.js';
+import { accessRemovedKeyboard, updateCardKeyboard } from '../bot/keyboards.js';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function daysSince(d: Date | null): number | null {
   if (!d) return null;
   return Math.floor((Date.now() - d.getTime()) / DAY_MS);
+}
+
+function fmtDate(d: Date): string {
+  return d.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' });
 }
 
 /**
@@ -43,6 +48,7 @@ export async function runGraceCheck(api: Api): Promise<void> {
       await revokeGroupAccess(api, telegramUserId, 'grace_period_expired', {
         dm: true,
         notice: t('dm.access_revoked'),
+        noticeKeyboard: accessRemovedKeyboard(),
       });
       removed++;
       continue;
@@ -50,7 +56,8 @@ export async function runGraceCheck(api: Api): Promise<void> {
 
     if (overdue === 1) {
       const user = await getUser(telegramUserId);
-      let portalUrl = config.publicUrl;
+      // The billing link travels as a URL button; omitted if the portal is down.
+      let portalUrl: string | null = null;
       if (user?.stripeCustomerId) {
         try {
           portalUrl = await createBillingPortalSession(user.stripeCustomerId);
@@ -58,7 +65,12 @@ export async function runGraceCheck(api: Api): Promise<void> {
           log.warn('grace warning: portal session failed', { telegramUserId, error: err });
         }
       }
-      await safeSendMessage(api, telegramUserId, t('dm.grace_warning', { portalUrl, days: config.graceDays }));
+      // Exact pause date: the period end (or last billing update) + grace days.
+      const base = sub.currentPeriodEnd ?? sub.updatedAt;
+      const pauseDate = new Date(base.getTime() + config.graceDays * DAY_MS);
+      await safeSendMessage(api, telegramUserId, t('dm.grace_warning', { date: fmtDate(pauseDate) }), {
+        reply_markup: updateCardKeyboard(portalUrl),
+      });
       warned++;
     }
   }

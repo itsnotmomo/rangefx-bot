@@ -2,7 +2,7 @@ import type Stripe from 'stripe';
 import { type Api } from 'grammy';
 import { stripe } from './client.js';
 import { createBillingPortalSession } from './checkout.js';
-import { config } from '../config/index.js';
+import { PLANS, PRICE_ID_TO_PLAN } from '../config/index.js';
 import { log } from '../util/logger.js';
 import { getUserByStripeCustomer, setStripeCustomerId, upsertUser } from '../services/users.js';
 import { markPaid } from '../services/funnel.js';
@@ -14,6 +14,12 @@ import {
 import { grantGroupAccess, hasLiveGroupGrant, revokeGroupAccess } from '../access/grants.js';
 import { safeSendMessage } from '../telegram/safe.js';
 import { t } from '../bot/content.js';
+import {
+  accessRemovedKeyboard,
+  cancelScheduledKeyboard,
+  planChangedKeyboard,
+  updateCardKeyboard,
+} from '../bot/keyboards.js';
 
 function toDate(unixSeconds: number | null | undefined): Date | null {
   return unixSeconds ? new Date(unixSeconds * 1000) : null;
@@ -150,7 +156,8 @@ async function handlePaymentFailed(api: Api, event: Stripe.Event): Promise<void>
     return;
   }
 
-  let portalUrl = config.publicUrl;
+  // The billing link travels as a URL button; omitted if the portal is down.
+  let portalUrl: string | null = null;
   if (customerId) {
     try {
       portalUrl = await createBillingPortalSession(customerId);
@@ -158,7 +165,9 @@ async function handlePaymentFailed(api: Api, event: Stripe.Event): Promise<void>
       log.warn('could not create portal session for past_due DM', { telegramUserId, error: err });
     }
   }
-  await safeSendMessage(api, telegramUserId, t('dm.past_due', { portalUrl }));
+  await safeSendMessage(api, telegramUserId, t('dm.past_due'), {
+    reply_markup: updateCardKeyboard(portalUrl),
+  });
   log.info('subscription past_due', { telegramUserId, subId });
 }
 
@@ -178,9 +187,56 @@ async function handleSubscriptionUpdated(api: Api, event: Stripe.Event): Promise
   const prev = await getSubscriptionByStripeId(sub.id);
   await syncSubscription(telegramUserId, sub);
 
-  // Newly scheduled cancellation -> a plain heads-up (access continues for now).
+  // Newly scheduled cancellation -> confirmation (access continues for now).
   if (sub.cancel_at_period_end && !prev?.cancelAtPeriodEnd) {
-    await safeSendMessage(api, telegramUserId, t('dm.cancel_scheduled', { date: fmtDate(toDate(sub.current_period_end)) }));
+    await safeSendMessage(api, telegramUserId, t('dm.cancel_scheduled', { date: fmtDate(toDate(sub.current_period_end)) }), {
+      reply_markup: cancelScheduledKeyboard(),
+    });
+  }
+
+  // Immediate plan change -> confirmation with the new plan and next payment.
+  const newPriceId = sub.items.data[0]?.price.id ?? null;
+  const newPlanKey = newPriceId ? PRICE_ID_TO_PLAN[newPriceId] : undefined;
+  if (prev?.plan && newPlanKey && prev.plan !== newPlanKey) {
+    const plan = PLANS[newPlanKey];
+    await safeSendMessage(
+      api,
+      telegramUserId,
+      t('dm.plan_changed', {
+        plan: plan.label,
+        cadence: plan.cadence,
+        date: fmtDate(toDate(sub.current_period_end)),
+      }),
+      { reply_markup: planChangedKeyboard() },
+    );
+  }
+
+  // Scheduled plan change (billing portal "switch at period end" attaches a
+  // subscription schedule) -> tell the user when it takes effect. Detected by
+  // the schedule appearing in this update's previous_attributes diff.
+  const prevAttrs = event.data.previous_attributes as Partial<Stripe.Subscription> | undefined;
+  const scheduleId = typeof sub.schedule === 'string' ? sub.schedule : sub.schedule?.id;
+  if (scheduleId && prevAttrs && 'schedule' in prevAttrs && !prevAttrs.schedule) {
+    try {
+      const schedule = await stripe.subscriptionSchedules.retrieve(scheduleId);
+      const nowSec = Math.floor(Date.now() / 1000);
+      const upcoming = schedule.phases.find((p) => p.start_date > nowSec);
+      const upPrice = upcoming?.items[0]?.price;
+      const upPriceId = typeof upPrice === 'string' ? upPrice : upPrice?.id;
+      const upPlanKey = upPriceId ? PRICE_ID_TO_PLAN[upPriceId] : undefined;
+      if (upcoming && upPlanKey && upPlanKey !== newPlanKey) {
+        await safeSendMessage(
+          api,
+          telegramUserId,
+          t('dm.plan_change_scheduled', {
+            plan: PLANS[upPlanKey].label,
+            date: fmtDate(new Date(upcoming.start_date * 1000)),
+          }),
+        );
+      }
+    } catch (err) {
+      log.warn('could not resolve scheduled plan change', { telegramUserId, scheduleId, error: err });
+    }
   }
 
   // Recovered to active and somehow without a grant -> restore access.
@@ -207,6 +263,7 @@ async function handleSubscriptionDeleted(api: Api, event: Stripe.Event): Promise
   await revokeGroupAccess(api, telegramUserId, 'customer.subscription.deleted', {
     dm: true,
     notice: t('dm.access_revoked'),
+    noticeKeyboard: accessRemovedKeyboard(),
   });
 }
 

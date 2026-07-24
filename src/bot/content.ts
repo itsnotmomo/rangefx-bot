@@ -1,218 +1,394 @@
-import { PLANS } from '../config/index.js';
-
 /**
- * All user-facing copy lives here, behind `t(key)`. Voice: restrained, plain,
- * confident. No hype, no exclamation marks, no emojis in body text. Persuasion
- * comes from clarity, proof, and structure — never pressure.
+ * All user-facing copy lives here, behind `t(key)`. This is the FINAL,
+ * approved copy specification — implemented verbatim. Do not rewrite, soften,
+ * or editorialize; propose changes against the spec, then update here and in
+ * COPY.md together.
  *
  * Language groundwork: every handler reads strings through `t()`, so adding
  * Italian later means adding an `it` dictionary here and a language argument —
- * no handler changes. All copy is final; nothing renders as a placeholder.
+ * no handler changes.
  *
- * Track-record figures mirror the stats section of rangecompound.com exactly
+ * Track-record figures mirror the stats section of rangecompound.com
  * (retrieved 24 Jul 2026). Update BOTH places together, never one.
  */
 
 const en = {
   // ---- /start ------------------------------------------------------------
   'welcome': [
-    'Range Compound.',
+    'Welcome to The Range Compound',
     '',
-    'The Compound is a working trading desk you watch operate from the inside.',
-    'Members get the desk’s execution, levels, and reasoning — in real time.',
+    'Where you can join a team of professional traders and operate alongside them.',
+    '',
+    'Inside The Compound, you see how the team operates in real time, the key levels, the execution, and the reasoning behind every decision.',
+    '',
+    'Press the button “🚀 Join The Compound” or “❓ How It Works” for more info!',
+    '',
+    'Choose an option below.',
   ].join('\n'),
 
   'payment.return': [
-    'Thanks — your payment is processing.',
+    'Payment received',
     '',
-    'Your personal invite will arrive in this chat within a minute or two.',
-    'If it doesn’t, open “My Subscription” and request a fresh link.',
+    'We are confirming your payment now.',
+    '',
+    'Your private link to enter The Compound will be sent in this chat automatically.',
+    'It normally arrives within a minute or two.',
+    '',
+    'If it does not arrive, open My Membership and tap Get a New Group Link.',
   ].join('\n'),
 
   // ---- Plans / checkout ----------------------------------------------------
-  'plans.intro': [
-    'Join The Compound',
+  'plans': [
+    'Choose your membership',
     '',
-    'Same access on every plan. Longer terms cost less per month.',
+    'Every plan gives you the exact same access to The Compound.',
+    'The only difference is how often you pay:',
+    '',
+    'Monthly — maximum flexibility',
+    'Quarterly — lower monthly cost',
+    'Annual — lowest monthly cost',
+    '',
+    'Choose the option that works best for you.',
   ].join('\n'),
-  'plans.cta': 'Pick a plan to continue to secure checkout.',
 
-  'checkout.priced': '{plan} — {price}, {cadence}.',
-  'checkout.unpriced': '{plan} — {cadence}.',
-  'checkout.body': [
-    'Payment runs through Stripe’s secure checkout. The moment it succeeds, your personal invite arrives in this chat.',
-    'The invite is yours alone — it works once and expires in {hours} hours.',
+  'checkout.priced': [
+    '{plan} Membership',
+    '',
+    'Price: {price}',
+    'Payment: {cadence}',
+    '',
+    'Tap the button below to pay securely using your debit or credit card.',
+    '',
+    'Your payment is processed by Stripe. After payment, your private Telegram group link will be sent here automatically.',
+    '',
+    'Your membership renews automatically until you cancel. You can manage or cancel it at any time.',
+    '',
+    'Your private group link works once and expires after {hours} hours.',
   ].join('\n'),
 
+  'checkout.unpriced': [
+    '{plan} Membership',
+    '',
+    'Payment: {cadence}',
+    '',
+    'Tap the button below to see the price and pay securely using your debit or credit card.',
+    '',
+    'After payment, your private Telegram group link will be sent here automatically.',
+    '',
+    'Your membership renews automatically until you cancel.',
+  ].join('\n'),
+
+  // ---- After payment ---------------------------------------------------------
   'invite.dm': [
-    'You’re in.',
+    'Welcome to The Compound',
     '',
-    'Your personal invite — works once, expires in {hours} hours:',
-    '{link}',
+    'Your membership is active.',
+    'Tap the button below to enter the private group.',
     '',
-    'Say hello when you land — the desk reads everything.',
-    'Levels and execution post in the group as they happen.',
-    'Need anything? Message this bot — it reaches the desk directly.',
+    'This link belongs to you, works once, and expires after {hours} hours.',
+    '',
+    'Once you enter:',
+    '• Turn on notifications',
+    '• Read the pinned information',
+    '• Say hello to the desk',
+    '',
+    'Entries, key levels, execution updates, and reasoning will be posted in the group as they happen.',
+    '',
+    'Need help at any point? Send a message to this bot.',
   ].join('\n'),
 
   'invite.fresh': [
-    'Your fresh invite — works once, expires in {hours} hours:',
-    '{link}',
+    'Your new group link is ready',
+    '',
+    'Tap below to enter The Compound.',
+    'This link works once and expires after {hours} hours.',
   ].join('\n'),
 
-  // ---- Lead follow-ups. Two touches maximum, then silence. -----------------
-  'followup.1': [
-    'One line, in case it wasn’t clear:',
-    '',
-    'The Compound is a live look inside a working trading desk — its execution, levels, and reasoning, as they happen.',
-    '',
-    'Plans below if you want in.',
-  ].join('\n'),
-
-  'followup.2': [
-    'Two facts, then we’ll leave it with you:',
-    '',
-    '33 months documented, month by month, since October 2023 — one closed negative, and it stayed on the record.',
-    '+72.3% trailing 12-month return across 1,059 logged positions.',
-    '',
-    'If that’s what you’re looking for, the plans are below.',
-    'Either way, this is the last message you’ll get about it.',
-  ].join('\n'),
-
-  // ---- Results (mirrors rangecompound.com's track-record section) ----------
+  // ---- Results -----------------------------------------------------------------
   'results': [
-    'Results',
+    'The Range Compound Results',
     '',
-    'Documented month by month since October 2023. Every position logged — entry, stop, and exit.',
+    'Do not take our word for it. Look at the record.',
+    'Every position has been documented with its entry, stop, and exit.',
     '',
-    '+72.3% — trailing 12-month return (sum of the last twelve documented months)',
-    '33 — months documented, unbroken',
-    '49% — average win rate across every logged position',
-    '1,059 — positions logged',
-    '+16% — best month (November 2023)',
-    '−2.5% — worst month (June 2025)',
+    'Trailing 12-month return: +72.3%',
+    'Documented track record: 33 months',
+    'Average win rate: 49%',
+    'Positions logged: 1,059',
+    'Best month: +16%',
+    'Worst month: −2.5%',
     '',
-    'Of 33 months, one closed negative — and it stayed on the record.',
+    'Only one of the 33 documented months closed negative — and it remains part of the public record.',
     '',
-    'Past performance does not guarantee future results; every outcome depends on your own execution and risk control.',
+    'No deleted losing months. No promises about what happens next. Just the complete record of what has already happened.',
     '',
-    'The full month-by-month record is on the site.',
+    'Past performance does not guarantee future results. Your outcome depends on your own execution and risk management.',
   ].join('\n'),
 
-  // ---- FAQ ------------------------------------------------------------------
-  'faq.intro': ['FAQ', '', 'Pick a question.'].join('\n'),
+  // ---- FAQ ------------------------------------------------------------------------
+  'faq.intro': ['How can we help?', '', 'Choose a question below.'].join('\n'),
 
-  'faq.what.q': 'What is The Compound, exactly?',
-  'faq.what.a':
-    'The Compound shares its own live trading — entries, levels, reasoning — as it happens. Members watch the desk work in real time. What you do with your own capital is your decision.',
+  'faq.what.q': 'What exactly is The Compound?',
+  'faq.what.a': [
+    'The Compound is a private Telegram group where you watch the Range trading desk operate live.',
+    '',
+    'You see what the desk is trading, the important levels, the execution, and the reasoning behind its decisions as they happen.',
+    '',
+    'You remain responsible for your own trades, capital, and risk.',
+  ].join('\n'),
 
-  'faq.get.q': 'What do I get as a member?',
-  'faq.get.a':
-    'The desk’s entries, levels, and reasoning, posted in the group as they happen. Same access on every plan — longer terms simply cost less per month.',
+  'faq.receive.q': 'What do I receive?',
+  'faq.receive.a': [
+    'Members receive the desk’s live entries, key levels, execution updates, and trading reasoning inside the private group.',
+    '',
+    'Every membership plan includes the same access. Longer plans simply cost less per month.',
+  ].join('\n'),
 
-  'faq.pairs.q': 'Which pairs does the desk trade?',
-  'faq.pairs.a':
-    'EURUSD, XAUUSD, and EURJPY. The desk trades the range, not the prediction — small, controlled wins, compounded.',
+  'faq.markets.q': 'Which markets do you trade?',
+  'faq.markets.a': [
+    'The desk focuses on:',
+    '• EURUSD',
+    '• Gold — XAUUSD',
+    '• EURJPY',
+    '',
+    'The focus is on trading controlled ranges rather than trying to predict every market movement.',
+  ].join('\n'),
 
-  'faq.results.q': 'What results can I expect?',
-  'faq.results.a':
-    'Look at the record, not at promises. The Results section here carries the desk’s documented figures, and the full month-by-month table is at rangecompound.com. Real numbers only — 33 months on the record, one negative.',
+  'faq.results.q': 'What results should I expect?',
+  'faq.results.a': [
+    'No result is guaranteed.',
+    'Different members may enter at different prices, use different risk, or manage positions differently.',
+    '',
+    'Instead of making promises, we show you the complete documented record:',
+    '33 months documented, 1,059 positions logged, and one negative month.',
+    '',
+    'You can inspect the full month-by-month record before joining.',
+  ].join('\n'),
 
-  'faq.payments.q': 'How do payments and renewals work?',
-  'faq.payments.a':
-    'Billed by Stripe through secure checkout — monthly, quarterly, or annual. Renewal is automatic until you cancel. Your card details never touch this bot, and your invite arrives here the moment payment succeeds.',
+  'faq.pay.q': 'How do I pay?',
+  'faq.pay.a': [
+    'Choose a monthly, quarterly, or annual membership.',
+    'Then tap Pay by Card — Secure Checkout.',
+    '',
+    'You can pay using a debit or credit card through Stripe.',
+    '',
+    'Once payment succeeds, your private group link is sent in this chat automatically.',
+  ].join('\n'),
+
+  'faq.renewals.q': 'How do renewals work?',
+  'faq.renewals.a': [
+    'Your membership renews automatically at the end of each billing period.',
+    '',
+    'Monthly memberships renew monthly, quarterly memberships renew every three months, and annual memberships renew yearly.',
+    '',
+    'You can manage or cancel your membership at any time from My Membership.',
+  ].join('\n'),
 
   'faq.cancel.q': 'How do I cancel?',
-  'faq.cancel.a':
-    'Anytime, from “My Subscription” → “Manage billing”. No forms, no questions. Access runs to the end of the period you’ve paid for.',
+  'faq.cancel.a': [
+    'Open My Membership and tap Manage Payment or Cancel.',
+    '',
+    'You do not need to fill out a form or contact support.',
+    '',
+    'After cancelling, you keep access until the end of the period you have already paid for.',
+  ].join('\n'),
 
   'faq.help.q': 'How do I get help?',
-  'faq.help.a':
-    'Message this bot. It reaches the desk directly, and the reply lands in this chat.',
+  'faq.help.a': [
+    'Tap Get Help or send a normal message directly to this bot.',
+    '',
+    'Your message goes to the desk, and the reply will appear in this chat.',
+  ].join('\n'),
 
-  // ---- Support ---------------------------------------------------------------
+  // ---- Support ---------------------------------------------------------------------
   'support': [
-    'Support',
+    'How can we help?',
     '',
-    'Send a message here — it goes straight to the desk. Replies land in this chat.',
+    'Send your message directly in this chat.',
+    'It will be sent to the Range desk, and the reply will appear here.',
     '',
-    'Quick answers:',
-    '• Manage or cancel: “My Subscription” → “Manage billing”.',
-    '• Missing invite? Open “My Subscription” — if your access is active you can request a fresh link.',
-    '• Payment failed? You’ll receive a link to update your card. There’s a short grace period before access pauses.',
+    'Common problems',
+    '',
+    'To change your card or cancel, open My Membership and tap Manage Payment or Cancel.',
+    'If your group link expired, open My Membership and tap Get a New Group Link.',
+    'If a payment failed, use the update-card button sent to you. Your access remains active for a short grace period.',
   ].join('\n'),
 
-  'support.ack': 'Received. The desk will reply here.',
+  'support.ack': [
+    'Message sent',
+    '',
+    'The Range desk has received your message and will reply in this chat.',
+  ].join('\n'),
 
-  // ---- Subscription status view ----------------------------------------------
+  // ---- Membership status view ---------------------------------------------------------
   'status.none': [
-    'You don’t have a subscription yet.',
+    'You are not a member yet',
     '',
-    'Pick a plan to join The Compound.',
+    'Choose a membership below to enter The Compound.',
+    'Every plan gives you the same access. Longer memberships cost less per month.',
   ].join('\n'),
-  'status.header': 'Your subscription',
+  'status.header': 'Your Membership',
   'status.plan_line': 'Plan: {plan}',
   'status.status_line': 'Status: {status}',
-  'status.ends_line': 'Ends: {date} (cancellation scheduled)',
-  'status.renews_line': 'Renews: {date}',
-  'status.access_line': 'Group access: {state}',
-  'status.access.active': 'active',
-  'status.access.inactive': 'not active',
-  'status.portal_unavailable': 'Billing portal is temporarily unavailable — try again shortly.',
+  'status.cancel_line': 'Status: Cancellation scheduled',
+  'status.ends_line': 'Access ends: {date}',
+  'status.next_payment_line': 'Next payment: {date}',
+  'status.access_line': 'Compound access: {state}',
+  'status.access.active': 'Active',
+  'status.access.paused': 'Paused',
+  'status.access.until': 'Active until {date}',
+  'status.portal_unavailable': 'We could not open your payment settings right now. Please try again shortly.',
 
   'status.label.active': 'Active',
-  'status.label.trialing': 'Trialing',
-  'status.label.past_due': 'Payment failing',
+  'status.label.trialing': 'Trial active',
+  'status.label.past_due': 'Payment needs attention',
   'status.label.canceled': 'Cancelled',
-  'status.label.unpaid': 'Unpaid',
-  'status.label.incomplete': 'Incomplete',
+  'status.label.unpaid': 'Payment needs attention',
+  'status.label.incomplete': 'Payment incomplete',
   'status.label.incomplete_expired': 'Expired',
 
-  // ---- Errors ------------------------------------------------------------------
-  'error.checkout': 'Couldn’t start checkout just now. Please try again in a moment.',
-  'error.invite': 'Couldn’t create an invite just now. Try again in a moment.',
-  'error.no_access': 'Your access isn’t active. Pick a plan to join The Compound.',
-
-  // ---- Billing lifecycle DMs -----------------------------------------------------
+  // ---- Billing lifecycle DMs --------------------------------------------------------------
   'dm.past_due': [
-    'A payment on your Range Compound subscription didn’t go through.',
+    'Your payment did not go through',
     '',
-    'You still have access for now. Update your card here to avoid interruption:',
-    '{portalUrl}',
+    'Do not worry — your Compound access is still active during the payment grace period.',
+    '',
+    'Tap below to update your debit or credit card and prevent your access from being interrupted.',
   ].join('\n'),
 
   'dm.grace_warning': [
-    'Your Range Compound payment is still failing.',
+    'Payment still needs attention',
     '',
-    'Access will pause in about {days} day(s) unless the payment is fixed.',
-    'Update your card here:',
-    '{portalUrl}',
+    'We still could not process your Range Compound payment.',
+    'Your access will pause on {date} unless your payment method is updated.',
+    '',
+    'Tap below to update your card and keep your access active.',
   ].join('\n'),
 
   'dm.access_revoked': [
-    'Your Range Compound subscription has ended and group access has been removed.',
+    'Your Compound access has paused',
     '',
-    'No hard feelings. If you resubscribe later, you’ll get a fresh invite automatically.',
+    'Your membership has ended, so you have been removed from the private group.',
+    '',
+    'You can rejoin whenever you are ready. After a new payment, a fresh group link will be sent here automatically.',
   ].join('\n'),
 
   'dm.cancel_scheduled': [
-    'Your subscription is set to cancel.',
+    'Cancellation confirmed',
     '',
-    'You’ll keep access until {date}. You can undo this anytime from “Manage billing”.',
+    'Your membership will not renew.',
+    'You will keep full access to The Compound until {date}.',
+    '',
+    'You can reverse the cancellation before that date from My Membership → Manage Payment or Cancel.',
   ].join('\n'),
 
-  // ---- Keyboard labels --------------------------------------------------------------
-  'kb.join': 'Join The Compound',
-  'kb.results': 'Results',
-  'kb.faq': 'FAQ',
-  'kb.status': 'My Subscription',
-  'kb.support': 'Support',
-  'kb.back': '« Back',
-  'kb.checkout': 'Open secure checkout',
-  'kb.billing': 'Manage billing',
-  'kb.fresh_invite': 'Get a fresh group invite',
-  'kb.more_questions': 'More questions',
-  'kb.website': 'rangecompound.com',
+  'dm.plan_changed': [
+    'Your membership has been updated',
+    '',
+    'New plan: {plan}',
+    'New billing schedule: {cadence}',
+    'Next payment: {date}',
+    '',
+    'Your access to The Compound remains active. You do not need a new group link.',
+  ].join('\n'),
+
+  'dm.plan_change_scheduled': [
+    'Your plan change is scheduled',
+    '',
+    'Your membership will change to {plan} on {date}.',
+    '',
+    'Your current access remains active and nothing else needs to be done.',
+  ].join('\n'),
+
+  // ---- Lead follow-ups. Two touches maximum, then silence. --------------------------------
+  'followup.1': [
+    'Still deciding? Here is exactly what you receive.',
+    '',
+    'Inside The Compound, you can watch the Range desk operate in real time:',
+    '• Live entries and key levels',
+    '• Execution and position updates',
+    '• The reasoning behind the trades',
+    '• Access to the private member group',
+    '',
+    'Every plan gives you the same access.',
+    'Choose your membership below when you are ready.',
+  ].join('\n'),
+
+  'followup.2': [
+    'One final message from us',
+    '',
+    'Before you decide, here is the record:',
+    '',
+    '33 months documented',
+    '1,059 positions logged',
+    '+72.3% trailing 12-month return',
+    'One negative month',
+    '',
+    'Every position is recorded with its entry, stop, and exit.',
+    '',
+    'We cannot promise what will happen next. We can only show you exactly what has already happened.',
+    '',
+    'If you want to watch the desk operate from inside, choose a membership below.',
+    'We will not send you any more joining reminders after this message.',
+  ].join('\n'),
+
+  // ---- Errors and edge cases -----------------------------------------------------------------
+  'error.checkout': [
+    'Checkout could not open',
+    '',
+    'Something went wrong while opening the payment page.',
+    'Tap below to try again. You have not been charged.',
+  ].join('\n'),
+
+  'error.invite': [
+    'We could not create your group link',
+    '',
+    'Your membership is still active.',
+    'Tap below to try again. If it continues, send us a message and we will help you enter.',
+  ].join('\n'),
+
+  'error.no_access': [
+    'Your membership is not active',
+    '',
+    'A private group link can only be created for active members.',
+    'Choose a membership below to rejoin The Compound.',
+  ].join('\n'),
+
+  'error.unknown_command': [
+    'I did not understand that command',
+    '',
+    'Use one of the buttons below.',
+    'To speak with the Range desk, simply send a normal message without starting it with “/”.',
+  ].join('\n'),
+
+  // ---- Button language (standardized) ----------------------------------------------------------
+  'kb.join': '🚀 Join The Compound',
+  'kb.results': '📊 See The Results',
+  'kb.faq': '❓ How It Works',
+  'kb.status': '👤 My Membership',
+  'kb.support': '💬 Get Help',
+  'kb.back': '⬅️ Back',
+  'kb.main_menu': '⬅️ Main Menu',
+  'kb.checkout': '💳 Pay by Card — Secure Checkout',
+  'kb.billing': '💳 Manage Payment or Cancel',
+  'kb.fresh_invite': '🔗 Get a New Group Link',
+  'kb.enter': '🚪 Enter The Compound',
+  'kb.choose_another': '⬅️ Choose Another Plan',
+  'kb.website_months': '📊 View Every Month on the Website',
+  'kb.more_questions': '❓ More Questions',
+  'kb.open_membership': '👤 Open My Membership',
+  'kb.view_membership': '👤 View My Membership',
+  'kb.update_card': '💳 Update My Card',
+  'kb.rejoin': '🔄 Rejoin The Compound',
+  'kb.try_checkout': '🔄 Try Checkout Again',
+  'kb.try_again': '🔄 Try Again',
+  'kb.full_results': '📊 View Full Results',
+  'kb.plan.monthly': '📅 Monthly — Most Flexible',
+  'kb.plan.quarterly': '⭐ Quarterly — Better Value',
+  'kb.plan.annual': '🏆 Annual — Best Value',
+  'kb.plan.monthly_priced': '📅 Monthly — {price}',
+  'kb.plan.quarterly_priced': '⭐ Quarterly — {price}',
+  'kb.plan.annual_priced': '🏆 Annual — {price} · Best Value',
 } as const;
 
 export type StringKey = keyof typeof en;
@@ -231,7 +407,7 @@ export function t(key: StringKey, vars?: Record<string, string | number>): strin
   return s;
 }
 
-/** Human label for a Stripe subscription status; falls back to the raw value. */
+/** Customer-facing label for a Stripe subscription status; falls back to the raw value. */
 export function statusLabel(status: string): string {
   const key = `status.label.${status}`;
   return key in en ? en[key as StringKey] : status;
@@ -240,25 +416,19 @@ export function statusLabel(status: string): string {
 // ---- Composed views ----------------------------------------------------------
 
 export function plansText(): string {
-  const lines = [t('plans.intro'), ''];
-  for (const plan of Object.values(PLANS)) {
-    lines.push(`• ${plan.label} — ${plan.cadence}`);
-  }
-  lines.push('', t('plans.cta'));
-  return lines.join('\n');
+  return t('plans');
 }
 
-/** Message that accompanies the "Open secure checkout" button. */
+/** Message that accompanies the "Pay by Card" checkout button. */
 export function checkoutMessage(
   planLabel: string,
   price: string | null,
   cadence: string,
   inviteExpiryHours: number,
 ): string {
-  const headline = price
-    ? t('checkout.priced', { plan: planLabel, price, cadence })
+  return price
+    ? t('checkout.priced', { plan: planLabel, price, cadence, hours: inviteExpiryHours })
     : t('checkout.unpriced', { plan: planLabel, cadence });
-  return [headline, '', t('checkout.body', { hours: inviteExpiryHours })].join('\n');
 }
 
 export interface FaqItem {
@@ -267,7 +437,7 @@ export interface FaqItem {
   answer: string;
 }
 
-const FAQ_IDS = ['what', 'get', 'pairs', 'results', 'payments', 'cancel', 'help'] as const;
+const FAQ_IDS = ['what', 'receive', 'markets', 'results', 'pay', 'renewals', 'cancel', 'help'] as const;
 
 export const FAQ_ITEMS: FaqItem[] = FAQ_IDS.map((id) => ({
   id,

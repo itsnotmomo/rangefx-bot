@@ -5,6 +5,7 @@ import { recordEvent } from '../services/events.js';
 import { findSupportRoute, saveSupportRoute } from '../services/support.js';
 import { safeCall, safeSendMessage } from '../telegram/safe.js';
 import { t } from './content.js';
+import { mainMenu } from './keyboards.js';
 import { log } from '../util/logger.js';
 
 /**
@@ -23,8 +24,9 @@ import { log } from '../util/logger.js';
  */
 export function registerSupport(bot: Bot): void {
   // ---- /reply fallback -------------------------------------------------------
-  bot.command('reply', async (ctx) => {
-    if (!ctx.from || !isAdmin(ctx.from.id)) return;
+  bot.command('reply', async (ctx, next) => {
+    // Non-admins fall through to the unknown-command response below.
+    if (!ctx.from || !isAdmin(ctx.from.id)) return next();
 
     const raw = (ctx.match ?? '').toString().trim();
     const space = raw.indexOf(' ');
@@ -32,7 +34,9 @@ export function registerSupport(bot: Bot): void {
     const message = space === -1 ? '' : raw.slice(space + 1).trim();
 
     if (!/^\d+$/.test(idPart) || !message) {
-      await ctx.reply('Usage: /reply <telegram_user_id> <message>\nTip: replying directly to a forwarded support message also works.');
+      await ctx.reply(
+        'Usage: /reply <telegram_user_id> <message>\nTip: replying directly to a forwarded support message also works.',
+      );
       return;
     }
 
@@ -57,16 +61,21 @@ export function registerSupport(bot: Bot): void {
   });
 
   // ---- User -> admins ----------------------------------------------------------
-  // Registered after every command handler, so only non-command text lands here.
+  // Registered after every command handler, so only non-command text (or an
+  // unrecognized command) lands here.
   bot.on('message:text', async (ctx) => {
     if (ctx.chat.type !== 'private') return;
     const from = ctx.from;
     if (!from || from.is_bot) return;
     const text = ctx.message.text.trim();
-    // Unknown "/commands" are typos, not support messages.
-    if (!text || text.startsWith('/')) return;
+    if (!text) return;
     // Admins ARE the desk — their plain text is not a support ticket.
     if (isAdmin(from.id)) return;
+    // Unrecognized "/commands" get a helpful response, never silence.
+    if (text.startsWith('/')) {
+      await ctx.reply(t('error.unknown_command'), { reply_markup: mainMenu() });
+      return;
+    }
 
     const telegramUserId = BigInt(from.id);
     const sub = await getLatestSubscription(telegramUserId);

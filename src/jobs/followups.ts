@@ -10,7 +10,7 @@ import { hasLiveGroupGrant } from '../access/grants.js';
 import { recordEvent } from '../services/events.js';
 import { safeSendMessage } from '../telegram/safe.js';
 import { t } from '../bot/content.js';
-import { plansKeyboard } from '../bot/keyboards.js';
+import { followup1Keyboard, followup2Keyboard } from '../bot/keyboards.js';
 
 /**
  * Lead follow-up delivery. Runs frequently (default every 10 minutes) so the
@@ -39,8 +39,9 @@ export async function runFollowupCheck(api: Api): Promise<void> {
     }
 
     const text = f.stage === 1 ? t('followup.1') : t('followup.2');
+    const keyboard = f.stage === 1 ? await followup1Keyboard() : await followup2Keyboard();
     const res = await safeSendMessage(api, f.telegramUserId, text, {
-      reply_markup: plansKeyboard(),
+      reply_markup: keyboard,
     });
     // Mark handled regardless of delivery — a follow-up is never retried.
     await markFollowupSent(f.id);

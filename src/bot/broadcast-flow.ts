@@ -32,8 +32,9 @@ const flows = new Map<number, FlowState>();
 const AUDIENCE_KEYS: AudienceKey[] = ['all', 'leads', 'churned', 'active'];
 
 export function registerBroadcastFlow(bot: Bot): void {
-  bot.command('broadcast', async (ctx) => {
-    if (!ctx.from || !isAdmin(ctx.from.id)) return;
+  bot.command('broadcast', async (ctx, next) => {
+    // Non-admins fall through to the unknown-command response.
+    if (!ctx.from || !isAdmin(ctx.from.id)) return next();
     flows.delete(ctx.from.id);
 
     const counts = await audienceCounts();
@@ -47,8 +48,9 @@ export function registerBroadcastFlow(bot: Bot): void {
     });
   });
 
-  bot.command('cancel', async (ctx) => {
-    if (!ctx.from || !isAdmin(ctx.from.id)) return;
+  bot.command('cancel', async (ctx, next) => {
+    // Non-admins fall through to the unknown-command response.
+    if (!ctx.from || !isAdmin(ctx.from.id)) return next();
     const had = flows.delete(ctx.from.id);
     await ctx.reply(had ? 'Broadcast cancelled.' : 'Nothing to cancel.');
   });

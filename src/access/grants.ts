@@ -1,5 +1,5 @@
 import { and, eq, isNull } from 'drizzle-orm';
-import { type Api } from 'grammy';
+import { type Api, type InlineKeyboard } from 'grammy';
 import { db } from '../db/index.js';
 import { accessGrants } from '../db/schema.js';
 import { config } from '../config/index.js';
@@ -7,6 +7,7 @@ import { log } from '../util/logger.js';
 import { recordEvent } from '../services/events.js';
 import { safeCall, safeSendMessage } from '../telegram/safe.js';
 import { t } from '../bot/content.js';
+import { enterButton } from '../bot/keyboards.js';
 
 const RESOURCE_TYPE = 'telegram_group';
 
@@ -90,11 +91,10 @@ export async function grantGroupAccess(
   }
 
   if (opts.dm !== false) {
-    const dm = await safeSendMessage(
-      api,
-      telegramUserId,
-      t('invite.dm', { hours: config.inviteExpiryHours, link: inviteLink }),
-    );
+    // The invite travels as a URL button, never as a raw link in the text.
+    const dm = await safeSendMessage(api, telegramUserId, t('invite.dm', { hours: config.inviteExpiryHours }), {
+      reply_markup: enterButton(inviteLink),
+    });
     if (!dm.ok) {
       log.warn('could not DM invite link', { telegramUserId, blocked: dm.blocked });
     }
@@ -112,7 +112,7 @@ export async function revokeGroupAccess(
   api: Api,
   telegramUserId: bigint,
   reason: string,
-  opts: { dm?: boolean; notice?: string } = {},
+  opts: { dm?: boolean; notice?: string; noticeKeyboard?: InlineKeyboard } = {},
 ): Promise<void> {
   // ban removes them; unban immediately clears the ban so they can rejoin later.
   const ban = await safeCall('banChatMember', () =>
@@ -147,6 +147,8 @@ export async function revokeGroupAccess(
   });
 
   if (opts.dm !== false && opts.notice) {
-    await safeSendMessage(api, telegramUserId, opts.notice);
+    await safeSendMessage(api, telegramUserId, opts.notice, {
+      reply_markup: opts.noticeKeyboard,
+    });
   }
 }

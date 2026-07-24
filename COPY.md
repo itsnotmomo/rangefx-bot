@@ -1,16 +1,23 @@
 # Range Compound bot — user-facing copy inventory
 
 Every message a user can ever receive from the bot, organized by flow, with the
-exact current text and the buttons shown alongside it.
+exact current text and the buttons shown alongside it. This reflects the
+approved copy specification, implemented verbatim.
 
 How to read this document:
 
 - Text inside `{curly braces}` is filled in automatically at send time (a
-  price, a date, a link). Everything else is sent exactly as written.
+  price, a date). Everything else is sent exactly as written.
 - "Buttons" are the tappable options attached beneath a message. Buttons
-  marked *(link)* open a web page; all others navigate inside the bot.
+  marked *(link)* open a web page — invite links and billing links always
+  travel as buttons, never as raw URLs in the text.
 - Defaults referenced below: invites expire in **24 hours**; the payment grace
   period is **3 days**. Both are configurable without copy changes.
+
+Standardized button language used throughout:
+🚀 Join The Compound · 📊 See The Results · ❓ How It Works · 👤 My Membership ·
+💬 Get Help · ⬅️ Back · 💳 Pay by Card — Secure Checkout · 💳 Manage Payment or
+Cancel · 🔗 Get a New Group Link · 🚪 Enter The Compound
 
 ---
 
@@ -20,320 +27,465 @@ How to read this document:
 
 Sent whenever a user opens the bot or sends /start — first-timers and
 returning users see the same message. Users arriving through a website
-deep-link (e.g. a "start" link on rangecompound.com) also see exactly this;
-the link source is recorded silently.
+deep-link also see exactly this; the link source is recorded silently.
 
-> Range Compound.
+> Welcome to The Range Compound
 >
-> The Compound is a working trading desk you watch operate from the inside.
-> Members get the desk’s execution, levels, and reasoning — in real time.
+> Where you can join a team of professional traders and operate alongside them.
+>
+> Inside The Compound, you see how the team operates in real time, the key levels, the execution, and the reasoning behind every decision.
+>
+> Press the button “🚀 Join The Compound” or “❓ How It Works” for more info!
+>
+> Choose an option below.
 
 Buttons:
-- Join The Compound
-- Results · FAQ
-- My Subscription · Support
+- 🚀 Join The Compound
+- 📊 See The Results · ❓ How It Works
+- 👤 My Membership · 💬 Get Help
 
-### 1.2 Returning from Stripe after paying
+### 1.2 Returning after successful payment
 
 Sent instead of the welcome when the user lands back in the bot straight from
 a successful checkout (the invite itself arrives separately — see 3.1).
 
-> Thanks — your payment is processing.
+> Payment received
 >
-> Your personal invite will arrive in this chat within a minute or two.
-> If it doesn’t, open “My Subscription” and request a fresh link.
+> We are confirming your payment now.
+>
+> Your private link to enter The Compound will be sent in this chat automatically.
+> It normally arrives within a minute or two.
+>
+> If it does not arrive, open My Membership and tap Get a New Group Link.
 
-Buttons: same main menu as 1.1.
+Buttons:
+- 👤 My Membership · 💬 Get Help
+- ⬅️ Main Menu
 
-### 1.3 Returning from Stripe after abandoning checkout
+### 1.3 Returning after leaving checkout
 
-Shows the standard welcome (1.1). No dedicated message.
+Shows the normal welcome message (1.1). No special message.
 
 ---
 
 ## 2. Main menu
 
-### 2.1 Join The Compound — the plan list
+### 2.1 Join The Compound — plan selection
 
-Shown when the user taps **Join The Compound** or sends /plans.
+Shown when the user taps **🚀 Join The Compound** or sends /plans.
 
-> Join The Compound
+> Choose your membership
 >
-> Same access on every plan. Longer terms cost less per month.
+> Every plan gives you the exact same access to The Compound.
+> The only difference is how often you pay:
 >
-> • Monthly — billed monthly
-> • Quarterly — billed every 3 months
-> • Annual — billed yearly
+> Monthly — maximum flexibility
+> Quarterly — lower monthly cost
+> Annual — lowest monthly cost
 >
-> Pick a plan to continue to secure checkout.
+> Choose the option that works best for you.
+
+Buttons — live prices are shown inside the buttons whenever available:
+- 📅 Monthly — {monthly price}
+- ⭐ Quarterly — {quarterly price}
+- 🏆 Annual — {annual price} · Best Value
+- ⬅️ Back
+
+If a price can't be fetched, that button falls back to:
+📅 Monthly — Most Flexible · ⭐ Quarterly — Better Value · 🏆 Annual — Best Value
+
+### 2.2 A plan is selected — checkout
+
+Shown after tapping a plan. The price is read live from Stripe.
+
+> {Plan} Membership
+>
+> Price: {price}
+> Payment: {billing cadence}
+>
+> Tap the button below to pay securely using your debit or credit card.
+>
+> Your payment is processed by Stripe. After payment, your private Telegram group link will be sent here automatically.
+>
+> Your membership renews automatically until you cancel. You can manage or cancel it at any time.
+>
+> Your private group link works once and expires after 24 hours.
+
+If the price cannot be loaded:
+
+> {Plan} Membership
+>
+> Payment: {billing cadence}
+>
+> Tap the button below to see the price and pay securely using your debit or credit card.
+>
+> After payment, your private Telegram group link will be sent here automatically.
+>
+> Your membership renews automatically until you cancel.
 
 Buttons:
-- Monthly — billed monthly
-- Quarterly — billed every 3 months
-- Annual — billed yearly
-- « Back
-
-### 2.2 A plan is selected — the checkout message
-
-Shown after tapping a plan. The price is read live from Stripe (e.g. "€79").
-
-> {Plan} — {price}, {billing cadence}.
->
-> Payment runs through Stripe’s secure checkout. The moment it succeeds, your personal invite arrives in this chat.
-> The invite is yours alone — it works once and expires in 24 hours.
-
-If the price can't be fetched at that moment, the first line reads
-"{Plan} — {billing cadence}." and the rest is unchanged.
-
-Buttons:
-- Open secure checkout *(link)*
-- « Back
+- 💳 Pay by Card — Secure Checkout *(link)*
+- ⬅️ Choose Another Plan
 
 ### 2.3 Results
 
-Shown when the user taps **Results** or sends /results. Figures mirror the
-stats section of rangecompound.com.
+Shown when the user taps **📊 See The Results** or sends /results.
 
-> Results
+> The Range Compound Results
 >
-> Documented month by month since October 2023. Every position logged — entry, stop, and exit.
+> Do not take our word for it. Look at the record.
+> Every position has been documented with its entry, stop, and exit.
 >
-> +72.3% — trailing 12-month return (sum of the last twelve documented months)
-> 33 — months documented, unbroken
-> 49% — average win rate across every logged position
-> 1,059 — positions logged
-> +16% — best month (November 2023)
-> −2.5% — worst month (June 2025)
+> Trailing 12-month return: +72.3%
+> Documented track record: 33 months
+> Average win rate: 49%
+> Positions logged: 1,059
+> Best month: +16%
+> Worst month: −2.5%
 >
-> Of 33 months, one closed negative — and it stayed on the record.
+> Only one of the 33 documented months closed negative — and it remains part of the public record.
 >
-> Past performance does not guarantee future results; every outcome depends on your own execution and risk control.
+> No deleted losing months. No promises about what happens next. Just the complete record of what has already happened.
 >
-> The full month-by-month record is on the site.
+> Past performance does not guarantee future results. Your outcome depends on your own execution and risk management.
 
 Buttons:
-- rangecompound.com *(link)*
-- « Back
+- 📊 View Every Month on the Website *(link)*
+- 🚀 Join The Compound
+- ⬅️ Back
 
 ### 2.4 FAQ
 
-Shown when the user taps **FAQ** or sends /faq.
+Shown when the user taps **❓ How It Works** or sends /faq.
 
-> FAQ
+> How can we help?
 >
-> Pick a question.
+> Choose a question below.
 
-Buttons: one per question below, then « Back.
+Buttons: one per question below, then ⬅️ Back.
 
 Each answer appears as the question, a blank line, then the answer, with
-buttons **More questions** and **« Back**.
+buttons **❓ More Questions · 🚀 Join The Compound** and **⬅️ Back**.
 
-**What is The Compound, exactly?**
+**What exactly is The Compound?**
 
-> The Compound shares its own live trading — entries, levels, reasoning — as it happens. Members watch the desk work in real time. What you do with your own capital is your decision.
+> The Compound is a private Telegram group where you watch the Range trading desk operate live.
+>
+> You see what the desk is trading, the important levels, the execution, and the reasoning behind its decisions as they happen.
+>
+> You remain responsible for your own trades, capital, and risk.
 
-**What do I get as a member?**
+**What do I receive?**
 
-> The desk’s entries, levels, and reasoning, posted in the group as they happen. Same access on every plan — longer terms simply cost less per month.
+> Members receive the desk’s live entries, key levels, execution updates, and trading reasoning inside the private group.
+>
+> Every membership plan includes the same access. Longer plans simply cost less per month.
 
-**Which pairs does the desk trade?**
+**Which markets do you trade?**
 
-> EURUSD, XAUUSD, and EURJPY. The desk trades the range, not the prediction — small, controlled wins, compounded.
+> The desk focuses on:
+> • EURUSD
+> • Gold — XAUUSD
+> • EURJPY
+>
+> The focus is on trading controlled ranges rather than trying to predict every market movement.
 
-**What results can I expect?**
+**What results should I expect?**
 
-> Look at the record, not at promises. The Results section here carries the desk’s documented figures, and the full month-by-month table is at rangecompound.com. Real numbers only — 33 months on the record, one negative.
+> No result is guaranteed.
+> Different members may enter at different prices, use different risk, or manage positions differently.
+>
+> Instead of making promises, we show you the complete documented record:
+> 33 months documented, 1,059 positions logged, and one negative month.
+>
+> You can inspect the full month-by-month record before joining.
 
-**How do payments and renewals work?**
+**How do I pay?**
 
-> Billed by Stripe through secure checkout — monthly, quarterly, or annual. Renewal is automatic until you cancel. Your card details never touch this bot, and your invite arrives here the moment payment succeeds.
+> Choose a monthly, quarterly, or annual membership.
+> Then tap Pay by Card — Secure Checkout.
+>
+> You can pay using a debit or credit card through Stripe.
+>
+> Once payment succeeds, your private group link is sent in this chat automatically.
+
+**How do renewals work?**
+
+> Your membership renews automatically at the end of each billing period.
+>
+> Monthly memberships renew monthly, quarterly memberships renew every three months, and annual memberships renew yearly.
+>
+> You can manage or cancel your membership at any time from My Membership.
 
 **How do I cancel?**
 
-> Anytime, from “My Subscription” → “Manage billing”. No forms, no questions. Access runs to the end of the period you’ve paid for.
+> Open My Membership and tap Manage Payment or Cancel.
+>
+> You do not need to fill out a form or contact support.
+>
+> After cancelling, you keep access until the end of the period you have already paid for.
 
 **How do I get help?**
 
-> Message this bot. It reaches the desk directly, and the reply lands in this chat.
+> Tap Get Help or send a normal message directly to this bot.
+>
+> Your message goes to the desk, and the reply will appear in this chat.
 
-### 2.5 My Subscription
+### 2.5 My Membership
 
-Shown when the user taps **My Subscription** or sends /status.
+Shown when the user taps **👤 My Membership** or sends /status.
 
 **Never subscribed:**
 
-> You don’t have a subscription yet.
+> You are not a member yet
 >
-> Pick a plan to join The Compound.
+> Choose a membership below to enter The Compound.
+> Every plan gives you the same access. Longer memberships cost less per month.
 
-Buttons: the three plan buttons, then « Back.
+Buttons: the three plan buttons (with live prices), then ⬅️ Back.
 
-**Has (or had) a subscription** — the view is assembled from these lines:
+**Active or previous membership** — the view is assembled from these lines:
 
-> Your subscription
+> Your Membership
 >
 > Plan: {Monthly | Quarterly | Annual}
 > Status: {see status wording below}
-> Renews: {date}
-> Group access: {active | not active}
+> Next payment: {date}
+> Compound access: {Active | Paused}
 
-Variations:
-- If cancellation is scheduled, the "Renews" line is replaced by:
-  > Ends: {date} (cancellation scheduled)
-- If the billing page can't be opened at that moment, this line is appended:
-  > Billing portal is temporarily unavailable — try again shortly.
+If cancellation is scheduled:
 
-Status wording by billing state: **Active** · **Trialing** · **Payment
-failing** (payment problems) · **Cancelled** · **Unpaid** · **Incomplete** ·
-**Expired**.
+> Your Membership
+>
+> Plan: {plan}
+> Status: Cancellation scheduled
+> Access ends: {date}
+> Compound access: Active until {date}
+
+If the payment-management page is temporarily unavailable, this line is
+appended:
+
+> We could not open your payment settings right now. Please try again shortly.
+
+Status wording by billing state: **Active** · **Trial active** · **Payment
+needs attention** · **Cancellation scheduled** · **Cancelled** · **Payment
+incomplete** · **Expired**.
 
 Buttons:
-- Manage billing *(link — only when billing is on file)*
-- Get a fresh group invite *(only while group access is active)*
-- « Back
+- 💳 Manage Payment or Cancel *(link — only when billing is on file)*
+- 🔗 Get a New Group Link *(only while membership access is active)*
+- 💬 Get Help
+- ⬅️ Back
 
 ### 2.6 Support
 
-Shown when the user taps **Support** or sends /support.
+Shown when the user taps **💬 Get Help** or sends /support.
 
-> Support
+> How can we help?
 >
-> Send a message here — it goes straight to the desk. Replies land in this chat.
+> Send your message directly in this chat.
+> It will be sent to the Range desk, and the reply will appear here.
 >
-> Quick answers:
-> • Manage or cancel: “My Subscription” → “Manage billing”.
-> • Missing invite? Open “My Subscription” — if your access is active you can request a fresh link.
-> • Payment failed? You’ll receive a link to update your card. There’s a short grace period before access pauses.
+> Common problems
+>
+> To change your card or cancel, open My Membership and tap Manage Payment or Cancel.
+> If your group link expired, open My Membership and tap Get a New Group Link.
+> If a payment failed, use the update-card button sent to you. Your access remains active for a short grace period.
 
 Buttons:
-- « Back
+- 👤 Open My Membership
+- ⬅️ Back
 
 ---
 
 ## 3. After payment
 
-### 3.1 "You're in" — the invite message
+### 3.1 Successful payment and private invitation
 
-Sent automatically the moment payment succeeds.
+Sent automatically the moment payment succeeds. The invite link is attached to
+the button, never shown as a raw link.
 
-> You’re in.
+> Welcome to The Compound
 >
-> Your personal invite — works once, expires in 24 hours:
-> {invite link}
+> Your membership is active.
+> Tap the button below to enter the private group.
 >
-> Say hello when you land — the desk reads everything.
-> Levels and execution post in the group as they happen.
-> Need anything? Message this bot — it reaches the desk directly.
+> This link belongs to you, works once, and expires after 24 hours.
+>
+> Once you enter:
+> • Turn on notifications
+> • Read the pinned information
+> • Say hello to the desk
+>
+> Entries, key levels, execution updates, and reasoning will be posted in the group as they happen.
+>
+> Need help at any point? Send a message to this bot.
 
-Buttons: none.
+Button:
+- 🚪 Enter The Compound *(link)*
 
-### 3.2 Fresh invite reissue
+### 3.2 New invitation requested
 
-Sent when a member with active access taps **Get a fresh group invite** in
-My Subscription (e.g. their original link expired unused).
+Sent when a member with active access taps **🔗 Get a New Group Link**.
 
-> Your fresh invite — works once, expires in 24 hours:
-> {invite link}
+> Your new group link is ready
+>
+> Tap below to enter The Compound.
+> This link works once and expires after 24 hours.
 
-Buttons: none.
+Buttons:
+- 🚪 Enter The Compound *(link)*
+- 💬 Get Help
 
 ---
 
-## 4. Billing lifecycle messages
+## 4. Billing lifecycle
 
 ### 4.1 Payment failed
 
 Sent when a renewal charge fails. Access continues during the grace period.
 
-> A payment on your Range Compound subscription didn’t go through.
+> Your payment did not go through
 >
-> You still have access for now. Update your card here to avoid interruption:
-> {billing link}
-
-Buttons: none.
-
-### 4.2 Grace warning
-
-Sent one day into a failed-payment period, before access is paused.
-
-> Your Range Compound payment is still failing.
+> Do not worry — your Compound access is still active during the payment grace period.
 >
-> Access will pause in about 3 day(s) unless the payment is fixed.
-> Update your card here:
-> {billing link}
+> Tap below to update your debit or credit card and prevent your access from being interrupted.
 
-Buttons: none.
+Buttons:
+- 💳 Update My Card *(link — omitted if the billing page is unavailable)*
+- 💬 Get Help
+
+### 4.2 Grace-period warning
+
+Sent one day into a failed-payment period. The pause date is exact, computed
+from the grace deadline.
+
+> Payment still needs attention
+>
+> We still could not process your Range Compound payment.
+> Your access will pause on {date} unless your payment method is updated.
+>
+> Tap below to update your card and keep your access active.
+
+Buttons:
+- 💳 Update My Card *(link — omitted if the billing page is unavailable)*
+- 💬 Get Help
 
 ### 4.3 Access removed
 
-Sent when the subscription ends (cancellation took effect, or the grace
-period ran out) and the member is removed from the group.
+Sent when the membership ends (cancellation took effect, or the grace period
+ran out) and the member is removed from the private group.
 
-> Your Range Compound subscription has ended and group access has been removed.
+> Your Compound access has paused
 >
-> No hard feelings. If you resubscribe later, you’ll get a fresh invite automatically.
+> Your membership has ended, so you have been removed from the private group.
+>
+> You can rejoin whenever you are ready. After a new payment, a fresh group link will be sent here automatically.
 
-Buttons: none.
+Buttons:
+- 🔄 Rejoin The Compound *(opens plan selection)*
+- 💬 Get Help
 
 ### 4.4 Cancellation scheduled
 
 Sent when the user schedules a cancellation in the billing portal.
 
-> Your subscription is set to cancel.
+> Cancellation confirmed
 >
-> You’ll keep access until {date}. You can undo this anytime from “Manage billing”.
+> Your membership will not renew.
+> You will keep full access to The Compound until {date}.
+>
+> You can reverse the cancellation before that date from My Membership → Manage Payment or Cancel.
 
-Buttons: none.
+Buttons:
+- 👤 Open My Membership
+- ⬅️ Main Menu
 
 ### 4.5 Plan changed
 
-**No message exists for this today.** A member who switches plans in the
-billing portal receives nothing from the bot — the change is recorded
-silently. Flagged here as a gap for copy review: decide whether a
-confirmation is wanted.
+Sent when a member switches plans in the billing portal and the change takes
+effect immediately.
+
+> Your membership has been updated
+>
+> New plan: {plan}
+> New billing schedule: {billing cadence}
+> Next payment: {date}
+>
+> Your access to The Compound remains active. You do not need a new group link.
+
+Buttons:
+- 👤 View My Membership
+- 💬 Get Help
+
+If the change takes effect later (a scheduled switch at the end of the
+period):
+
+> Your plan change is scheduled
+>
+> Your membership will change to {new plan} on {date}.
+>
+> Your current access remains active and nothing else needs to be done.
+
+Buttons: none.
 
 ---
 
 ## 5. Follow-up messages
 
-Sent to users who looked at plans or opened checkout but didn't pay. Two
-touches maximum, ever; paying (or already being a member) cancels them.
+Sent only to users who opened the plans or checkout but did not pay. Two
+touches maximum, ever; becoming a member stops them immediately.
 
-### 5.1 Touch 1 — one hour later
+### 5.1 Follow-up one — one hour later
 
-> One line, in case it wasn’t clear:
+> Still deciding? Here is exactly what you receive.
 >
-> The Compound is a live look inside a working trading desk — its execution, levels, and reasoning, as they happen.
+> Inside The Compound, you can watch the Range desk operate in real time:
+> • Live entries and key levels
+> • Execution and position updates
+> • The reasoning behind the trades
+> • Access to the private member group
 >
-> Plans below if you want in.
+> Every plan gives you the same access.
+> Choose your membership below when you are ready.
 
-Buttons: the three plan buttons, then « Back.
+Buttons: the three plan buttons (with live prices), then 📊 See The Results.
 
-### 5.2 Touch 2 — twenty-four hours later
+### 5.2 Follow-up two — twenty-four hours later
 
-> Two facts, then we’ll leave it with you:
+> One final message from us
 >
-> 33 months documented, month by month, since October 2023 — one closed negative, and it stayed on the record.
-> +72.3% trailing 12-month return across 1,059 logged positions.
+> Before you decide, here is the record:
 >
-> If that’s what you’re looking for, the plans are below.
-> Either way, this is the last message you’ll get about it.
+> 33 months documented
+> 1,059 positions logged
+> +72.3% trailing 12-month return
+> One negative month
+>
+> Every position is recorded with its entry, stop, and exit.
+>
+> We cannot promise what will happen next. We can only show you exactly what has already happened.
+>
+> If you want to watch the desk operate from inside, choose a membership below.
+> We will not send you any more joining reminders after this message.
 
-Buttons: the three plan buttons, then « Back.
+Buttons: the three plan buttons (with live prices), then 📊 View Full Results.
 
 ---
 
 ## 6. Support conversation
 
-### 6.1 Acknowledgment
+### 6.1 Automatic acknowledgment
 
 Sent immediately after any plain (non-command) message a user sends the bot.
 
-> Received. The desk will reply here.
+> Message sent
+>
+> The Range desk has received your message and will reply in this chat.
 
 Buttons: none.
 
-### 6.2 The desk's reply
+### 6.2 Reply from the desk
 
 When an admin answers, the user receives the admin's message **exactly as the
 admin wrote it** — free text, no wrapper, no signature. It reads as a normal
@@ -343,38 +495,62 @@ chat message from the bot.
 
 ## 7. Errors and edge cases
 
-### 7.1 Checkout couldn't start
+### 7.1 Checkout could not open
 
-Shown if opening Stripe checkout fails after picking a plan.
+Shown if opening the payment page fails after picking a plan.
 
-> Couldn’t start checkout just now. Please try again in a moment.
+> Checkout could not open
+>
+> Something went wrong while opening the payment page.
+> Tap below to try again. You have not been charged.
 
-Buttons: « Back
+Buttons:
+- 🔄 Try Checkout Again *(retries the same plan)*
+- ⬅️ Choose Another Plan
+- 💬 Get Help
 
-### 7.2 Fresh invite couldn't be created
+### 7.2 New invitation could not be created
 
-Shown if the invite reissue fails (e.g. Telegram briefly unavailable).
+Shown if the group-link reissue fails.
 
-> Couldn’t create an invite just now. Try again in a moment.
+> We could not create your group link
+>
+> Your membership is still active.
+> Tap below to try again. If it continues, send us a message and we will help you enter.
 
-Buttons: « Back
+Buttons:
+- 🔄 Try Again
+- 💬 Get Help
+- ⬅️ Back
 
-### 7.3 Fresh invite requested without active access
+### 7.3 Invitation requested without active membership
 
-Shown if a user without live group access somehow requests an invite.
+Shown if a user without active membership requests a group link.
 
-> Your access isn’t active. Pick a plan to join The Compound.
+> Your membership is not active
+>
+> A private group link can only be created for active members.
+> Choose a membership below to rejoin The Compound.
 
-Buttons: the three plan buttons, then « Back.
+Buttons: the three plan buttons (with live prices), then 💬 Get Help.
 
-### 7.4 Unknown commands
+### 7.4 Unknown command
 
-A message starting with "/" that isn't a recognized command gets **no reply
-at all** — deliberate silence rather than an error. (Plain text, by contrast,
-is always treated as a support message and acknowledged — see 6.1.)
+A message starting with "/" that isn't a recognized command always gets this
+response — never silence. (Admin-only commands typed by regular users get the
+same response.)
+
+> I did not understand that command
+>
+> Use one of the buttons below.
+> To speak with the Range desk, simply send a normal message without starting it with “/”.
+
+Buttons: the full main menu (as in 1.1).
 
 ### 7.5 Broadcasts
 
 Users may occasionally receive one-off announcements (text, or a photo with a
 caption) written by the desk. That content is freeform and not part of this
-inventory.
+inventory. Guidance: every promotional broadcast should ideally end with one
+clear action button (🚀 Join The Compound · 📊 See The Full Record ·
+👤 Open My Membership) rather than relying on a raw link.

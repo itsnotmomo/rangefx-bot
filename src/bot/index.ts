@@ -12,13 +12,18 @@ import { createCheckoutSession } from '../stripe/checkout.js';
 import { priceDisplay } from '../stripe/prices.js';
 import { FAQ_ITEMS, checkoutMessage, plansText, t } from './content.js';
 import {
-  backHome,
-  checkoutButton,
+  checkoutErrorKeyboard,
+  checkoutKeyboard,
   faqAnswerKeyboard,
   faqKeyboard,
+  freshInviteKeyboard,
+  inviteErrorKeyboard,
   mainMenu,
+  noAccessKeyboard,
+  paymentReturnKeyboard,
   plansKeyboard,
   resultsKeyboard,
+  supportKeyboard,
 } from './keyboards.js';
 import { renderStatus } from './status.js';
 import { registerAdminCommands } from './admin.js';
@@ -76,9 +81,10 @@ export function buildBot(): Bot {
     // first_started_at. Legacy imports (row exists, never started) count as new.
     const firstStart = await markStarted(BigInt(ctx.from!.id));
 
-    // The user's welcome always comes first...
+    // The user's welcome always comes first. An abandoned checkout return
+    // ('cancelled') shows the normal welcome — no special message.
     if (payload === 'paid') {
-      await ctx.reply(t('payment.return'), { reply_markup: mainMenu() });
+      await ctx.reply(t('payment.return'), { reply_markup: paymentReturnKeyboard() });
     } else {
       await ctx.reply(t('welcome'), { reply_markup: mainMenu() });
     }
@@ -109,7 +115,7 @@ export function buildBot(): Bot {
   bot.command('plans', async (ctx) => {
     await captureUser(ctx);
     await touchPlansFunnel(BigInt(ctx.from!.id));
-    await ctx.reply(plansText(), { reply_markup: plansKeyboard() });
+    await ctx.reply(plansText(), { reply_markup: await plansKeyboard() });
   });
 
   bot.command('faq', async (ctx) => {
@@ -124,10 +130,11 @@ export function buildBot(): Bot {
 
   bot.command('support', async (ctx) => {
     await captureUser(ctx);
-    await ctx.reply(t('support'), { reply_markup: backHome() });
+    await ctx.reply(t('support'), { reply_markup: supportKeyboard() });
   });
 
-  // Admin-only commands (/stats, /find) — self-gated to ADMIN_USER_IDS.
+  // Admin-only commands (/stats, /find) — self-gated to ADMIN_USER_IDS;
+  // non-admins fall through to the unknown-command response.
   registerAdminCommands(bot);
 
   // Interactive /broadcast (+ /cancel). Its content-capture message handler
@@ -144,7 +151,7 @@ export function buildBot(): Bot {
     await ctx.answerCallbackQuery();
     await captureUser(ctx);
     await touchPlansFunnel(BigInt(ctx.from!.id));
-    await editView(ctx, plansText(), { reply_markup: plansKeyboard() });
+    await editView(ctx, plansText(), { reply_markup: await plansKeyboard() });
   });
 
   bot.callbackQuery('menu:results', async (ctx) => {
@@ -169,7 +176,7 @@ export function buildBot(): Bot {
 
   bot.callbackQuery('menu:support', async (ctx) => {
     await ctx.answerCallbackQuery();
-    await editView(ctx, t('support'), { reply_markup: backHome() });
+    await editView(ctx, t('support'), { reply_markup: supportKeyboard() });
   });
 
   bot.callbackQuery('menu:status', async (ctx) => {
@@ -179,21 +186,23 @@ export function buildBot(): Bot {
     await editView(ctx, text, { reply_markup: keyboard });
   });
 
-  // ---- Fresh invite for an already-authorised member ----
+  // ---- New group link for an active member ----
   bot.callbackQuery('invite:fresh', async (ctx) => {
     await ctx.answerCallbackQuery();
     const telegramUserId = BigInt(ctx.from!.id);
     if (!(await hasLiveGroupGrant(telegramUserId))) {
-      await editView(ctx, t('error.no_access'), { reply_markup: plansKeyboard() });
+      await editView(ctx, t('error.no_access'), { reply_markup: await noAccessKeyboard() });
       return;
     }
     const link = await mintInviteLink(bot.api, telegramUserId, 'reissue');
     if (!link) {
-      await editView(ctx, t('error.invite'), { reply_markup: backHome() });
+      await editView(ctx, t('error.invite'), { reply_markup: inviteErrorKeyboard() });
       return;
     }
     await recordEvent({ type: 'access.invite_reissued', telegramUserId });
-    await ctx.reply(t('invite.fresh', { hours: config.inviteExpiryHours, link }));
+    await ctx.reply(t('invite.fresh', { hours: config.inviteExpiryHours }), {
+      reply_markup: freshInviteKeyboard(link),
+    });
   });
 
   // ---- Plan selection -> Stripe Checkout ----
@@ -215,17 +224,18 @@ export function buildBot(): Bot {
       await editView(
         ctx,
         checkoutMessage(plan.label, price, plan.cadence, config.inviteExpiryHours),
-        { reply_markup: checkoutButton(url).row().text(t('kb.back'), 'menu:plans') },
+        { reply_markup: checkoutKeyboard(url) },
       );
     } catch (err) {
       log.error('checkout session failed', { telegramUserId, planKey, error: err });
-      await editView(ctx, t('error.checkout'), { reply_markup: backHome() });
+      await editView(ctx, t('error.checkout'), { reply_markup: checkoutErrorKeyboard(planKey) });
     }
   });
 
-  // Support relay LAST: native-reply routing, /reply, and the plain-text inbox.
-  // Registering the message handlers after every command means only
-  // non-command text reaches them.
+  // Support relay LAST: native-reply routing, /reply, the plain-text inbox,
+  // and the unknown-command response. Registering the message handlers after
+  // every command means only non-command text (or unknown commands) reaches
+  // them.
   registerSupport(bot);
 
   return bot;

@@ -51,8 +51,9 @@ async function revenueLines(activeByPlan: Record<string, number>): Promise<strin
 }
 
 export function registerAdminCommands(bot: Bot): void {
-  bot.command('stats', async (ctx) => {
-    if (!requireAdmin(ctx)) return;
+  bot.command('stats', async (ctx, next) => {
+    // Non-admins fall through to the unknown-command response.
+    if (!requireAdmin(ctx)) return next();
     const [users, statuses, funnel, sources, activeByPlan] = await Promise.all([
       countUsers(),
       subscriptionStatusCounts(),
@@ -96,8 +97,9 @@ export function registerAdminCommands(bot: Bot): void {
     await ctx.reply(lines.join('\n'));
   });
 
-  bot.command('find', async (ctx) => {
-    if (!requireAdmin(ctx)) return;
+  bot.command('find', async (ctx, next) => {
+    // Non-admins fall through to the unknown-command response.
+    if (!requireAdmin(ctx)) return next();
     const query = (ctx.match ?? '').toString().trim();
     if (!query) {
       await ctx.reply('Usage: /find <username | telegram_id | name fragment>');
