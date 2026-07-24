@@ -49,8 +49,10 @@ function nameOf(info: StartEventInfo): string {
   return [info.firstName, info.lastName].filter(Boolean).join(' ') || '—';
 }
 
-function usernameOf(info: StartEventInfo): string {
-  return info.username ? `@${info.username}` : 'none';
+/** "@alice (Alice Smith)", or just "Alice Smith" when there's no username. */
+function subjectOf(info: StartEventInfo): string {
+  const name = nameOf(info);
+  return info.username ? `@${info.username} (${name})` : name;
 }
 
 async function sendToAdmins(api: Api, text: string): Promise<number> {
@@ -104,15 +106,18 @@ export async function notifyStart(api: Api, info: StartEventInfo, variant: Start
   });
 }
 
+// No ID line in either variant — /find covers lookups when needed.
+
 async function buildNewUserText(info: StartEventInfo): Promise<string> {
-  const [user, total] = await Promise.all([getUser(info.telegramUserId), countUsers()]);
+  const [user, status, total] = await Promise.all([
+    getUser(info.telegramUserId),
+    classifyUser(info.telegramUserId),
+    countUsers(),
+  ]);
   return [
-    'New user started the bot',
-    `Name: ${nameOf(info)}`,
-    `Username: ${usernameOf(info)}`,
-    `ID: ${info.telegramUserId}`,
-    `Source: ${user?.acquisitionSource ?? 'direct'}`,
-    `Total users: ${total}`,
+    `${subjectOf(info)} just started the bot for the first time`,
+    `Status: ${status} · Source: ${user?.acquisitionSource ?? 'direct'}`,
+    `Total users: ${new Intl.NumberFormat('en').format(total)}`,
   ].join('\n');
 }
 
@@ -122,12 +127,8 @@ async function buildReturningText(info: StartEventInfo): Promise<string> {
     classifyUser(info.telegramUserId),
   ]);
   return [
-    'User returned — /start',
-    `Name: ${nameOf(info)}`,
-    `Username: ${usernameOf(info)}`,
-    `ID: ${info.telegramUserId}`,
-    `Status: ${status}`,
-    `Source: ${user?.acquisitionSource ?? 'direct'}`,
+    `${subjectOf(info)} pressed /start`,
+    `Status: ${status} · Source: ${user?.acquisitionSource ?? 'direct'}`,
   ].join('\n');
 }
 
