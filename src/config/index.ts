@@ -19,6 +19,12 @@ function optional(name: string, fallback: string): string {
   return value === undefined || value.trim() === '' ? fallback : value.trim();
 }
 
+function boolOf(name: string, fallback: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (raw === undefined || raw === '') return fallback;
+  return !['false', '0', 'no', 'off'].includes(raw);
+}
+
 function intOf(name: string, fallback: number): number {
   const raw = process.env[name];
   if (raw === undefined || raw.trim() === '') return fallback;
@@ -102,6 +108,13 @@ export const config = {
 
   // Broadcast throttling (Telegram allows ~30 msg/s globally to different users).
   broadcastPerSecond: intOf('BROADCAST_PER_SECOND', 25),
+
+  /**
+   * DM admins when a user starts the bot for the first time. Turn off during
+   * the legacy launch broadcast — 11,400 people pressing start in one hour
+   * would flood the admin chat.
+   */
+  notifyNewUsers: boolOf('NOTIFY_NEW_USERS', true),
 
   nodeEnv: optional('NODE_ENV', 'development'),
 } as const;

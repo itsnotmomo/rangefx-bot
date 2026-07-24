@@ -54,6 +54,13 @@ chat.
 `users.acquisition_source` on first start; `/stats` breaks down conversion by
 source.
 
+Admins are DM'd on every `/start`: a "new user" card (first real start ever —
+the atomic null→set transition on `users.first_started_at`; legacy-imported
+rows count as new) or a "user returned" card with lead/active/churned status.
+Stripe checkout returns never notify. Above ~30 starts/minute the notifier
+switches to per-minute summaries until the burst ebbs. `NOTIFY_NEW_USERS=false`
+silences it entirely.
+
 > **Copy:** all user-facing strings live in `src/bot/content.ts` behind a
 > `t(key)` helper (English dictionary; Italian can be added later without
 > touching handlers). Track-record figures mirror the stats section of

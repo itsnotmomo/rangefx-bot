@@ -40,7 +40,12 @@ export const users = pgTable('users', {
   /** Deep-link payload from the user's FIRST /start (e.g. 'website'); 'direct' if none. */
   acquisitionSource: text('acquisition_source'),
   // Funnel timestamps — each records the FIRST time the user hit that stage.
-  startedAt: timestamp('started_at', { withTimezone: true }),
+  /**
+   * First real /start. Null for legacy-imported rows (they have a row but never
+   * truly started this bot). The null → set transition drives the "new user"
+   * admin notification; already-set means "returning".
+   */
+  firstStartedAt: timestamp('first_started_at', { withTimezone: true }),
   viewedPlansAt: timestamp('viewed_plans_at', { withTimezone: true }),
   openedCheckoutAt: timestamp('opened_checkout_at', { withTimezone: true }),
   paidAt: timestamp('paid_at', { withTimezone: true }),

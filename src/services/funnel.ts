@@ -6,7 +6,7 @@ import { followups, users } from '../db/schema.js';
  * Funnel tracking + the lead follow-up engine.
  *
  * Funnel state lives as first-touch timestamps on `users`:
- *   started_at -> viewed_plans_at -> opened_checkout_at -> paid_at
+ *   first_started_at -> viewed_plans_at -> opened_checkout_at -> paid_at
  *
  * Follow-ups: when a user views plans or opens checkout without having paid,
  * two touches are scheduled — stage 1 at +1 hour, stage 2 at +24 hours — and
@@ -24,15 +24,26 @@ export const FOLLOWUP_STAGES = [
 
 // ---- Funnel marks (first touch wins) --------------------------------------
 
-async function markFirst(telegramUserId: bigint, column: 'startedAt' | 'viewedPlansAt' | 'openedCheckoutAt' | 'paidAt'): Promise<void> {
+async function markFirst(telegramUserId: bigint, column: 'viewedPlansAt' | 'openedCheckoutAt' | 'paidAt'): Promise<void> {
   await db
     .update(users)
     .set({ [column]: sql`COALESCE(${users[column]}, now())` })
     .where(eq(users.telegramUserId, telegramUserId));
 }
 
-export async function markStarted(telegramUserId: bigint): Promise<void> {
-  await markFirst(telegramUserId, 'startedAt');
+/**
+ * Record the user's first real /start. Returns true ONLY on the null → set
+ * transition — the isNull guard makes this atomic, so it's true exactly once
+ * per user, ever, even under concurrent double-taps or bot restarts. Legacy
+ * imports never set first_started_at, so their first genuine /start returns true.
+ */
+export async function markStarted(telegramUserId: bigint): Promise<boolean> {
+  const updated = await db
+    .update(users)
+    .set({ firstStartedAt: sql`now()` })
+    .where(and(eq(users.telegramUserId, telegramUserId), isNull(users.firstStartedAt)))
+    .returning({ id: users.telegramUserId });
+  return updated.length > 0;
 }
 
 export async function markViewedPlans(telegramUserId: bigint): Promise<void> {
@@ -124,7 +135,7 @@ export interface FunnelCounts {
 export async function funnelCounts(): Promise<FunnelCounts> {
   const [row] = await db
     .select({
-      started: count(users.startedAt),
+      started: count(users.firstStartedAt),
       viewedPlans: count(users.viewedPlansAt),
       openedCheckout: count(users.openedCheckoutAt),
       paid: count(users.paidAt),

@@ -28,7 +28,7 @@ function funnelStage(u: User): string {
   if (u.paidAt) return 'paid';
   if (u.openedCheckoutAt) return 'opened checkout';
   if (u.viewedPlansAt) return 'viewed plans';
-  if (u.startedAt) return 'started';
+  if (u.firstStartedAt) return 'started';
   return '—';
 }
 

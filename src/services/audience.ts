@@ -74,6 +74,36 @@ export async function audienceCounts(): Promise<Record<AudienceKey, number>> {
   return Object.fromEntries(keys.map((k, i) => [k, values[i]])) as Record<AudienceKey, number>;
 }
 
+export type UserStatus = 'lead' | 'active' | 'churned';
+
+/**
+ * One user's standing, consistent with the audience definitions above:
+ * live grant → active; paid before or held-then-lost access → churned;
+ * otherwise → lead.
+ */
+export async function classifyUser(telegramUserId: bigint): Promise<UserStatus> {
+  const [live] = await db
+    .select({ id: accessGrants.id })
+    .from(accessGrants)
+    .where(and(eq(accessGrants.telegramUserId, telegramUserId), isNull(accessGrants.revokedAt)))
+    .limit(1);
+  if (live) return 'active';
+
+  const [u] = await db
+    .select({ paidAt: users.paidAt })
+    .from(users)
+    .where(eq(users.telegramUserId, telegramUserId))
+    .limit(1);
+  if (u?.paidAt) return 'churned';
+
+  const [revoked] = await db
+    .select({ id: accessGrants.id })
+    .from(accessGrants)
+    .where(and(eq(accessGrants.telegramUserId, telegramUserId), isNotNull(accessGrants.revokedAt)))
+    .limit(1);
+  return revoked ? 'churned' : 'lead';
+}
+
 /** Recipient ids for an audience, in stable id order. */
 export async function audienceIds(key: AudienceKey): Promise<bigint[]> {
   const rows = await db

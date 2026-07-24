@@ -24,6 +24,7 @@ import { renderStatus } from './status.js';
 import { registerAdminCommands } from './admin.js';
 import { registerBroadcastFlow } from './broadcast-flow.js';
 import { registerSupport } from './support.js';
+import { notifyStart } from './notifications.js';
 import { hasLiveGroupGrant, mintInviteLink } from '../access/grants.js';
 import { safeCall } from '../telegram/safe.js';
 import { log } from '../util/logger.js';
@@ -71,13 +72,32 @@ export function buildBot(): Bot {
     const source = !payload || isCheckoutReturn ? 'direct' : payload.slice(0, 64);
 
     await captureUser(ctx, source);
-    await markStarted(BigInt(ctx.from!.id));
+    // True exactly once, ever: the atomic null -> set transition on
+    // first_started_at. Legacy imports (row exists, never started) count as new.
+    const firstStart = await markStarted(BigInt(ctx.from!.id));
 
+    // The user's welcome always comes first...
     if (payload === 'paid') {
       await ctx.reply(t('payment.return'), { reply_markup: mainMenu() });
-      return;
+    } else {
+      await ctx.reply(t('welcome'), { reply_markup: mainMenu() });
     }
-    await ctx.reply(t('welcome'), { reply_markup: mainMenu() });
+
+    // ...then admins are notified fire-and-forget. Checkout returns are not
+    // engagement events and never notify.
+    if (!isCheckoutReturn) {
+      const from = ctx.from!;
+      void notifyStart(
+        bot.api,
+        {
+          telegramUserId: BigInt(from.id),
+          firstName: from.first_name ?? null,
+          lastName: from.last_name ?? null,
+          username: from.username ?? null,
+        },
+        firstStart ? 'new' : 'returning',
+      ).catch((err) => log.error('start notification failed', { error: err }));
+    }
   });
 
   bot.command('status', async (ctx) => {
