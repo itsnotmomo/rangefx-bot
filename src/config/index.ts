@@ -1,37 +1,13 @@
-import 'dotenv/config';
+import { boolOf, intOf, optional, required } from './env.js';
 
 /**
  * Centralised, validated configuration. Every secret and tunable comes from the
  * environment — nothing is hardcoded. Import `config` anywhere; it is frozen and
  * validated once at process start, so a misconfigured deploy fails fast and loud.
+ *
+ * Base helpers live in ./env.ts so single-variable consumers (the DB pool) can
+ * validate just their own variable without pulling in this full validation.
  */
-
-function required(name: string): string {
-  const value = process.env[name];
-  if (value === undefined || value.trim() === '') {
-    throw new Error(`Missing required environment variable: ${name}`);
-  }
-  return value.trim();
-}
-
-function optional(name: string, fallback: string): string {
-  const value = process.env[name];
-  return value === undefined || value.trim() === '' ? fallback : value.trim();
-}
-
-function boolOf(name: string, fallback: boolean): boolean {
-  const raw = process.env[name]?.trim().toLowerCase();
-  if (raw === undefined || raw === '') return fallback;
-  return !['false', '0', 'no', 'off'].includes(raw);
-}
-
-function intOf(name: string, fallback: number): number {
-  const raw = process.env[name];
-  if (raw === undefined || raw.trim() === '') return fallback;
-  const n = Number.parseInt(raw, 10);
-  if (Number.isNaN(n)) throw new Error(`Environment variable ${name} must be an integer, got: ${raw}`);
-  return n;
-}
 
 /** Parse a comma/space separated list of numeric Telegram user ids. */
 function parseAdminIds(raw: string): bigint[] {

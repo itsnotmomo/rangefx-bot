@@ -5,10 +5,10 @@ import { sql } from 'drizzle-orm';
 import { users } from '../src/db/schema.js';
 import { log } from '../src/util/logger.js';
 
-// The DB pool pulls in every runtime env var at import time. We load it lazily
-// (only on a real run) so `--dry-run` works with just a CSV — no BOT_TOKEN/
-// Stripe keys/DATABASE_URL required. This `typeof import` type is erased at
-// compile time and does NOT trigger that runtime load.
+// The DB pool validates DATABASE_URL (and nothing else) at import time. We
+// load it lazily — only on a real run — so `--dry-run` works with just a CSV
+// and zero env. A real run needs exactly DATABASE_URL. This `typeof import`
+// type is erased at compile time and does NOT trigger that runtime load.
 type Db = (typeof import('../src/db/index.js'))['db'];
 
 /**
@@ -237,7 +237,7 @@ async function main(): Promise<void> {
     return;
   }
 
-  // Load the DB only now — this validates env and opens a pool.
+  // Load the DB only now — validates DATABASE_URL (only) and opens a pool.
   const { db, pool } = await import('../src/db/index.js');
 
   try {
