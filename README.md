@@ -137,9 +137,10 @@ npm run import-legacy -- --dry-run ./path/to/legacy.csv
 - **Every imported user is a lead.** No access grants, no subscription rows,
   `first_started_at` stays null — their first real `/start` notifies admins as
   a new user, and they fall into the "leads" broadcast audience.
-- The raw CSV status (`lead` / `customer` / `churned`) is preserved verbatim in
-  `users.legacy_status` — purely informational (shown in `/find`, usable for
-  future segmentation), with no behavioral effect anywhere.
+- The raw CSV status (`lead` / `customer` / `churned`) and
+  `referredByAffiliateId` are preserved verbatim in `users.legacy_status` and
+  `users.legacy_affiliate_id` — purely informational (shown in `/find`, usable
+  for future segmentation), with no behavioral effect anywhere.
 - **Idempotent:** re-running never duplicates users, never rewrites a record's
   origin/creation date, and only fills blank profile fields; `legacy_status`
   alone is refreshed by a newer export.

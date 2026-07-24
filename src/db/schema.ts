@@ -42,6 +42,11 @@ export const users = pgTable('users', {
    * 'churned'). Purely informational — no behavioral effect anywhere.
    */
   legacyStatus: text('legacy_status'),
+  /**
+   * referredByAffiliateId from the legacy InviteMember export. Purely
+   * informational — no behavioral effect anywhere.
+   */
+  legacyAffiliateId: text('legacy_affiliate_id'),
   /** Deep-link payload from the user's FIRST /start (e.g. 'website'); 'direct' if none. */
   acquisitionSource: text('acquisition_source'),
   // Funnel timestamps — each records the FIRST time the user hit that stage.

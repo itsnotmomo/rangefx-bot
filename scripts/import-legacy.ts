@@ -38,8 +38,9 @@ type Db = (typeof import('../src/db/index.js'))['db'];
  *   • `source` and `created_at` are set ONLY on first insert, so a member who
  *     later signs up through the bot keeps their real origin, and re-runs don't
  *     rewrite history.
- *   • `legacy_status` follows the CSV: a fresh non-null value wins (a newer
- *     export reflects newer state), a blank never erases what we had.
+ *   • `legacy_status` and `legacy_affiliate_id` follow the CSV: a fresh
+ *     non-null value wins (a newer export reflects newer state), a blank never
+ *     erases what we had.
  *
  * Usage:  npm run import-legacy -- [--dry-run] ./path/to/legacy.csv
  *
@@ -71,6 +72,8 @@ interface CleanUser {
   email: string | null;
   /** Raw CSV status, kept verbatim (lowercased) in users.legacy_status. */
   legacyStatus: string | null;
+  /** referredByAffiliateId from the CSV, kept verbatim in users.legacy_affiliate_id. */
+  legacyAffiliateId: string | null;
   createdAt: Date;
 }
 
@@ -145,6 +148,7 @@ function dedupe(rows: LegacyRow[]): { users: CleanUser[]; skipped: number; dupli
       firstName: cleanText(row.name),
       email: cleanText(row.email),
       legacyStatus: cleanText(row.status)?.toLowerCase() ?? null,
+      legacyAffiliateId: cleanText(row.referredByAffiliateId),
       createdAt: parseDate(row.date),
     });
   }
@@ -163,8 +167,8 @@ function chunked<T>(items: T[], size: number): T[][] {
 /**
  * Upsert users in batches. On conflict we only fill blanks (COALESCE) and never
  * touch `source`/`created_at`, preserving the record's real origin and age.
- * `legacy_status` is the one exception: a fresh non-null value wins, since a
- * newer export reflects newer state.
+ * `legacy_status` and `legacy_affiliate_id` are the exceptions: a fresh
+ * non-null value wins, since a newer export reflects newer state.
  */
 async function importUsers(db: Db, clean: CleanUser[]): Promise<void> {
   let done = 0;
@@ -177,6 +181,7 @@ async function importUsers(db: Db, clean: CleanUser[]): Promise<void> {
           firstName: u.firstName,
           email: u.email,
           legacyStatus: u.legacyStatus,
+          legacyAffiliateId: u.legacyAffiliateId,
           source: SOURCE,
           createdAt: u.createdAt,
         })),
@@ -187,6 +192,7 @@ async function importUsers(db: Db, clean: CleanUser[]): Promise<void> {
           firstName: sql`COALESCE(EXCLUDED.first_name, ${users.firstName})`,
           email: sql`COALESCE(EXCLUDED.email, ${users.email})`,
           legacyStatus: sql`COALESCE(EXCLUDED.legacy_status, ${users.legacyStatus})`,
+          legacyAffiliateId: sql`COALESCE(EXCLUDED.legacy_affiliate_id, ${users.legacyAffiliateId})`,
         },
       });
     done += batch.length;

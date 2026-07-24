@@ -114,7 +114,9 @@ export function registerAdminCommands(bot: Bot): void {
     for (const u of found) {
       const sub = await getLatestSubscription(u.telegramUserId);
       const plan = sub?.plan ? PLANS[sub.plan as keyof typeof PLANS]?.label ?? sub.plan : '—';
-      const legacy = u.legacyStatus ? ` · legacy: ${u.legacyStatus}` : '';
+      const legacy =
+        (u.legacyStatus ? ` · legacy: ${u.legacyStatus}` : '') +
+        (u.legacyAffiliateId ? ` · affiliate: ${u.legacyAffiliateId}` : '');
       blocks.push(
         [
           `${u.firstName ?? '—'}${u.telegramUsername ? ` (@${u.telegramUsername})` : ''} · id ${u.telegramUserId}`,
