@@ -12,6 +12,7 @@
     "build": "tsc -p tsconfig.json --noEmit",
     "start": "tsx src/index.ts",
     "migrate": "tsx src/db/migrate.ts",
+    "test": "tsx --test src/news/*.test.ts",
     "import-legacy": "tsx scripts/import-legacy.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit"
   },

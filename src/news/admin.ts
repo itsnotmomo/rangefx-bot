@@ -3,14 +3,14 @@ import { isAdmin } from '../config/index.js';
 import { log } from '../util/logger.js';
 import {
   cadence,
-  DESK_TZ,
+  QUIET_TZ,
   effectivePollIntervalSeconds,
   newsChatId,
   newsConfig,
   newsConfigured,
   newsTopicId,
 } from './config.js';
-import { bothTimes } from './format.js';
+import { zoneTimes } from './format.js';
 import { activeProvider, mockProvider } from './providers/index.js';
 import { providerUsage, setPaused, statusSnapshot, upsertOneEvent } from './repo.js';
 import { capDisabled, quotaState } from './quota.js';
@@ -29,15 +29,13 @@ function requireAdmin(ctx: Context): boolean {
   return uid !== undefined && isAdmin(uid);
 }
 
-/** "Mon 28 Jul, 21:30 Makassar · 14:30 London" — always derived from stored UTC. */
+/**
+ * The three desk clocks, always derived from stored UTC. Uses the same renderer
+ * as the member-facing messages, so /news_status shows exactly the times the
+ * topic will show — including the per-zone dates when they split.
+ */
 function fullTime(at: Date): string {
-  const day = new Intl.DateTimeFormat('en-GB', {
-    timeZone: DESK_TZ,
-    weekday: 'short',
-    day: 'numeric',
-    month: 'short',
-  }).format(at);
-  return `${day}, ${bothTimes(at)}`;
+  return zoneTimes(at);
 }
 
 function ago(at: Date | null): string {
@@ -75,7 +73,7 @@ export function registerNewsCommands(bot: Bot): void {
       `Provider:   ${provider.name} (NEWS_PROVIDER=${newsConfig.provider})`,
       `Chat:       ${newsChatId() ?? '—'}${newsTopicId() !== undefined ? ` · topic ${newsTopicId()}` : ' · no topic set'}`,
       `Filter:     ${snapshot.currencies} · min impact ${snapshot.minImpact}`,
-      `Quiet:      ${newsConfig.quietStart && newsConfig.quietEnd ? `${newsConfig.quietStart}–${newsConfig.quietEnd} ${DESK_TZ}` : 'not set'}`,
+      `Quiet:      ${newsConfig.quietStart && newsConfig.quietEnd ? `${newsConfig.quietStart}–${newsConfig.quietEnd} ${QUIET_TZ}` : 'not set'}`,
       '',
       'Cadence',
       `  import:     every ${cadence.importIntervalMinutes}m`,
@@ -171,9 +169,9 @@ export function registerNewsCommands(bot: Bot): void {
 
     const stages = [
       minutes > 6
-        ? `  • T-5 notice at ${bothTimes(new Date(event.releaseAt.getTime() - 5 * 60_000))}`
+        ? `  • T-5 notice at ${zoneTimes(new Date(event.releaseAt.getTime() - 5 * 60_000))}`
         : '  • T-5 notice SKIPPED — needs more than 6 minutes lead time',
-      `  • release post at ${bothTimes(event.releaseAt)}`,
+      `  • release post at ${zoneTimes(event.releaseAt)}`,
       `  • result edit ~15s later (polled every ${cadence.pollIntervalSeconds}s)`,
     ];
 

@@ -11,9 +11,15 @@ import { log } from '../util/logger.js';
  * mean a news typo could stop payments booting.
  */
 
-/** The desk sits in Makassar; every message leads with local time. */
-export const DESK_TZ = 'Asia/Makassar';
-export const LONDON_TZ = 'Europe/London';
+/**
+ * Zone in which NEWS_QUIET_START / NEWS_QUIET_END are interpreted.
+ *
+ * London, matching the zone the messages lead with. Quiet hours have to be
+ * anchored somewhere, and anchoring them to the first clock members read is
+ * the only choice that does not require mental arithmetic to reason about.
+ * The message clocks themselves live in format.ts.
+ */
+export const QUIET_TZ = 'Europe/London';
 
 /** Trading Economics' long-dead public credential. Kept as the documented default. */
 export const TE_GUEST_KEY = 'guest:guest';
@@ -73,7 +79,7 @@ export const newsConfig = {
   provider: optional('NEWS_PROVIDER', 'mock'),
   teApiKey: optional('TE_API_KEY', TE_GUEST_KEY),
   rapidApiKey: optional('RAPIDAPI_KEY', ''),
-  /** 'HH:MM' in DESK_TZ. Both must be set for quiet hours to apply. */
+  /** 'HH:MM' in QUIET_TZ (London). Both must be set for quiet hours to apply. */
   quietStart: optional('NEWS_QUIET_START', ''),
   quietEnd: optional('NEWS_QUIET_END', ''),
 
@@ -207,7 +213,7 @@ function parseHhMm(raw: string): number | null {
 }
 
 /**
- * Whether `at` falls inside quiet hours, evaluated in DESK_TZ.
+ * Whether `at` falls inside quiet hours, evaluated in QUIET_TZ.
  *
  * Windows wrap midnight (22:00 → 07:00 is the normal case). Quiet hours never
  * suppress a message — they only send it with disable_notification, because a
@@ -217,6 +223,6 @@ export function isQuietHour(start: string, end: string, at: Date = new Date()): 
   const s = parseHhMm(start);
   const e = parseHhMm(end);
   if (s === null || e === null || s === e) return false;
-  const now = minutesInZone(at, DESK_TZ);
+  const now = minutesInZone(at, QUIET_TZ);
   return s < e ? now >= s && now < e : now >= s || now < e;
 }

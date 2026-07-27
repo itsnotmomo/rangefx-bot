@@ -1,4 +1,4 @@
-import { DESK_TZ, LONDON_TZ } from './config.js';
+import { watchedInstrumentsSentence } from './instruments.js';
 import { type EconomicEvent } from './schema.js';
 
 /**
@@ -12,8 +12,18 @@ import { type EconomicEvent } from './schema.js';
  * a regression, not a feature.
  */
 
-/** Instruments that reliably move on USD/EUR/JPY high-impact prints. */
-const WATCHED_INSTRUMENTS = 'EURUSD, XAUUSD, EURJPY';
+/**
+ * The three desks a release is read from, in reading order.
+ *
+ * IANA zone ids, never fixed offsets — the London/New York DST transitions do
+ * not align with each other, so the gap between them is not constant and only
+ * the tz database gets it right year-round.
+ */
+const ZONES = [
+  { label: 'London', timeZone: 'Europe/London' },
+  { label: 'New York', timeZone: 'America/New_York' },
+  { label: 'Dubai', timeZone: 'Asia/Dubai' },
+] as const;
 
 /** Escape the five characters Telegram's HTML parse mode cares about. */
 export function esc(value: string): string {
@@ -34,12 +44,56 @@ function timeIn(at: Date, timeZone: string): string {
   }).format(at);
 }
 
+/** "Wed 29 Jul" for an instant, read in the given zone. */
+function dateIn(at: Date, timeZone: string): string {
+  const parts = new Intl.DateTimeFormat('en-GB', {
+    timeZone,
+    weekday: 'short',
+    day: 'numeric',
+    month: 'short',
+  }).formatToParts(at);
+  const get = (type: string): string => parts.find((p) => p.type === type)?.value ?? '';
+  // Assembled from parts rather than formatted directly, so no locale can slip
+  // a comma into the middle of it.
+  return `${get('weekday')} ${get('day')} ${get('month')}`;
+}
+
+/** 'YYYY-MM-DD' in the given zone — used only to test whether dates agree. */
+function dateKeyIn(at: Date, timeZone: string): string {
+  return new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+  }).format(at);
+}
+
 /**
- * Both desk clocks, always computed from the stored UTC instant — never from a
- * pre-formatted provider string.
+ * The three desk clocks, always computed from the stored UTC instant — never
+ * from a pre-formatted provider string.
+ *
+ * Two forms, because the zones span UTC-4 to UTC+4 and the calendar date
+ * frequently splits across them:
+ *
+ *   same date  -> "London 06:49 · New York 01:49 · Dubai 09:49"
+ *   split      -> "Wed 29 Jul 23:00 London · Wed 29 Jul 18:00 New York · Thu 30 Jul 02:00 Dubai"
+ *
+ * The compact form is only safe when all three agree; the moment one differs,
+ * every entry carries its own date so no reader has to work out which day is
+ * theirs.
  */
-export function bothTimes(at: Date): string {
-  return `${timeIn(at, DESK_TZ)} Makassar · ${timeIn(at, LONDON_TZ)} London`;
+export function zoneTimes(at: Date): string {
+  const rows = ZONES.map((z) => ({
+    label: z.label,
+    time: timeIn(at, z.timeZone),
+    date: dateIn(at, z.timeZone),
+    key: dateKeyIn(at, z.timeZone),
+  }));
+
+  const sameDate = new Set(rows.map((r) => r.key)).size === 1;
+  return sameDate
+    ? rows.map((r) => `${r.label} ${r.time}`).join(' · ')
+    : rows.map((r) => `${r.date} ${r.time} ${r.label}`).join(' · ');
 }
 
 /** A numeric reading and the unit it was expressed in. */
@@ -102,7 +156,18 @@ function readingLines(pairs: Array<[string, string | null]>): string[] {
   return pairs.filter(([, v]) => v !== null && v !== '').map(([label, v]) => `${label}: ${esc(v!)}`);
 }
 
-/** T-5 notice: what is coming, what is expected, when, and where it lands. */
+/**
+ * T-5 notice. The order is fixed and deliberate:
+ *
+ *   1. currency and event name
+ *   2. "Releases in 5 minutes."
+ *   3. blank
+ *   4. Previous, Forecast
+ *   5. blank
+ *   6. the three times
+ *   7. blank
+ *   8. the volatility line
+ */
 export function renderReminder(event: EconomicEvent): string {
   const lines = [heading(event), 'Releases in 5 minutes.', ''];
   const readings = readingLines([
@@ -110,17 +175,21 @@ export function renderReminder(event: EconomicEvent): string {
     ['Forecast', event.forecast],
   ]);
   if (readings.length > 0) lines.push(...readings, '');
-  lines.push(bothTimes(event.releaseAt), '');
-  lines.push(`Elevated volatility expected on ${WATCHED_INSTRUMENTS}.`);
+  lines.push(zoneTimes(event.releaseAt), '');
+  lines.push(`Elevated volatility expected on ${watchedInstrumentsSentence()}.`);
   return lines.join('\n');
 }
 
 /**
  * Release post. Deliberately thin — this exact message is edited into the
  * result a moment later, so the topic carries two messages per event, not three.
+ *
+ * It carries the release time so the post timestamps the event in the topic's
+ * own record, and so the split-date rule applies consistently across every
+ * member-facing surface.
  */
 export function renderRelease(event: EconomicEvent): string {
-  return [heading(event), 'Releasing now.'].join('\n');
+  return [heading(event), 'Releasing now.', '', zoneTimes(event.releaseAt)].join('\n');
 }
 
 /** Result, rendered as an in-place edit of the release message. */
