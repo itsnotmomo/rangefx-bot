@@ -88,6 +88,16 @@ export const newsConfig = {
   // whose request allowance you have actually checked in /news_status.
   /** Minutes between calendar imports (default 6 hours). */
   importIntervalMinutes: intOf('NEWS_IMPORT_INTERVAL_MINUTES', 360),
+  /**
+   * How far ahead each import reaches, in hours (default 7 days).
+   *
+   * Costs nothing extra in requests — the window is one range query either
+   * way — but a wider window returns more rows, and the provider caps a
+   * response at 500. If a week of high-impact events ever reaches that ceiling
+   * the import is truncated; that is detected and surfaced rather than
+   * silently swallowed (see lastFetchTruncated).
+   */
+  lookaheadHours: intOf('NEWS_LOOKAHEAD_HOURS', 168),
   /** Seconds between result polls while any event is inside its window. */
   pollIntervalSeconds: intOf('NEWS_POLL_INTERVAL_SECONDS', 60),
   /**
@@ -113,6 +123,9 @@ export const newsConfig = {
  */
 export const cadence = {
   importIntervalMinutes: Math.min(Math.max(newsConfig.importIntervalMinutes, 1), 1440),
+  // Capped at 31 days: beyond that the provider's 500-row ceiling is a
+  // near-certainty and the far end of the window is guesswork anyway.
+  lookaheadHours: Math.min(Math.max(newsConfig.lookaheadHours, 1), 744),
   pollIntervalSeconds: Math.min(Math.max(newsConfig.pollIntervalSeconds, 5), 3600),
   pollWindowMinutes: Math.min(Math.max(newsConfig.pollWindowMinutes, 1), 120),
   // Passed through unclamped: 0 legitimately means "block everything" and

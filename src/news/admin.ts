@@ -76,7 +76,7 @@ export function registerNewsCommands(bot: Bot): void {
       `Quiet:      ${newsConfig.quietStart && newsConfig.quietEnd ? `${newsConfig.quietStart}–${newsConfig.quietEnd} ${QUIET_TZ}` : 'not set'}`,
       '',
       'Cadence',
-      `  import:     every ${cadence.importIntervalMinutes}m`,
+      `  import:     every ${cadence.importIntervalMinutes}m, ${cadence.lookaheadHours}h lookahead`,
       `  reminder:   every 1m (T-5 window)`,
       `  release:    every 1m`,
       `  result:     every ${effectivePollIntervalSeconds(provider.name)}s, ${cadence.pollWindowMinutes}m after release${

@@ -37,8 +37,6 @@ import { sendNews, editNews, shouldSilence } from './telegram.js';
  * schedule's precision.
  */
 
-const IMPORT_HORIZON_HOURS = 48;
-
 /** Stops a slow run from stacking on top of itself on a per-minute schedule. */
 const running = { import: false, reminder: false, release: false, result: false };
 
@@ -62,7 +60,10 @@ async function guarded(key: keyof typeof running, label: string, fn: () => Promi
 // ---------------------------------------------------------------------------
 
 /**
- * Pull the next 48 hours and upsert on (provider, provider_event_id).
+ * Pull the next NEWS_LOOKAHEAD_HOURS and upsert on (provider, provider_event_id).
+ *
+ * One request regardless of how wide the window is — the provider takes a date
+ * range, so a 7-day lookahead costs exactly what a 2-day one did.
  *
  * Runs regardless of the paused flag: pausing means "stop talking", not "go
  * stale". When the desk resumes, the calendar is already current.
@@ -77,7 +78,7 @@ export async function runImport(api: Api): Promise<void> {
   if (!(await enforceQuota(api, provider.name))) return;
 
   const from = new Date();
-  const to = new Date(from.getTime() + IMPORT_HORIZON_HOURS * 3_600_000);
+  const to = new Date(from.getTime() + cadence.lookaheadHours * 3_600_000);
 
   const fetched = await provider.fetchUpcoming(from, to);
   // Read immediately after the call, before anything else can overwrite it.
@@ -92,6 +93,7 @@ export async function runImport(api: Api): Promise<void> {
 
   log.info('news import finished', {
     provider: provider.name,
+    lookaheadHours: cadence.lookaheadHours,
     fetched: fetched.length,
     kept: kept.length,
     written,
