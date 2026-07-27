@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { deviationLine, renderReminder, renderRelease, renderResult, zoneTimes } from './format.js';
-import { instrumentName, oxfordList, watchedInstrumentsSentence } from './instruments.js';
+import { instrumentName, oxfordList, watchedInstrumentsSentence } from '../util/instruments.js';
 import { type EconomicEvent } from './schema.js';
 
 /**
@@ -131,12 +131,10 @@ describe('renderReminder', () => {
 });
 
 describe('renderRelease', () => {
-  it('states the release and its three clocks', () => {
+  it('states only the release — the T-5 notice already carried the times', () => {
     assert.deepEqual(renderRelease(event('2026-07-29T23:00:00Z')).split('\n'), [
       '<b>USD · Non-Farm Payrolls</b>',
       'Releasing now.',
-      '',
-      'Thu 30 Jul 00:00 London · Wed 29 Jul 19:00 New York · Thu 30 Jul 03:00 Dubai',
     ]);
   });
 });

@@ -10,7 +10,13 @@
  *
  * Track-record figures mirror the stats section of rangecompound.com
  * (retrieved 24 Jul 2026). Update BOTH places together, never one.
+ *
+ * Instrument names come from the shared display map in util/instruments.ts, so
+ * the plans copy and the calendar messages can never name the same instrument
+ * differently.
  */
+
+import { instrumentName } from '../util/instruments.js';
 
 const en = {
   // ---- /start ------------------------------------------------------------
@@ -147,9 +153,9 @@ const en = {
   'faq.markets.q': 'Which markets do you trade?',
   'faq.markets.a': [
     'The desk focuses on:',
-    '• EURUSD',
-    '• Gold — XAUUSD',
-    '• EURJPY',
+    `• ${instrumentName('EURUSD')}`,
+    `• ${instrumentName('XAUUSD')}`,
+    `• ${instrumentName('EURJPY')}`,
     '',
     'The focus is on trading controlled ranges rather than trying to predict every market movement.',
   ].join('\n'),

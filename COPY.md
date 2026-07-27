@@ -184,9 +184,9 @@ buttons **❓ More Questions · 🚀 Join The Compound** and **⬅️ Back**.
 **Which markets do you trade?**
 
 > The desk focuses on:
-> • EURUSD
-> • Gold — XAUUSD
-> • EURJPY
+> • EUR/USD
+> • Gold
+> • EUR/JPY
 >
 > The focus is on trading controlled ranges rather than trying to predict every market movement.
 

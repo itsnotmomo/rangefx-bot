@@ -1,9 +1,13 @@
 /**
  * Member-facing instrument naming.
  *
- * One map, used everywhere the desk's instruments appear in a message, so a
- * ticker never leaks into member-facing copy in raw form. Members read
- * "Gold", not "XAUUSD".
+ * One map, used everywhere the desk's instruments appear in member-facing
+ * text, so a ticker never leaks into copy in raw form. Members read "Gold",
+ * not "XAUUSD".
+ *
+ * Lives in util/ rather than news/ because both the calendar messages and the
+ * bot's plans/FAQ copy read from it. Keeping one source means the two can
+ * never drift into naming the same instrument differently.
  */
 
 /** Ticker -> the name members see. */

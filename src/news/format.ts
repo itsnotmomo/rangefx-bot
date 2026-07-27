@@ -1,4 +1,4 @@
-import { watchedInstrumentsSentence } from './instruments.js';
+import { watchedInstrumentsSentence } from '../util/instruments.js';
 import { type EconomicEvent } from './schema.js';
 
 /**
@@ -184,12 +184,11 @@ export function renderReminder(event: EconomicEvent): string {
  * Release post. Deliberately thin — this exact message is edited into the
  * result a moment later, so the topic carries two messages per event, not three.
  *
- * It carries the release time so the post timestamps the event in the topic's
- * own record, and so the split-date rule applies consistently across every
- * member-facing surface.
+ * No times: the T-5 notice already gave them, and "Releasing now" is its own
+ * timestamp.
  */
 export function renderRelease(event: EconomicEvent): string {
-  return [heading(event), 'Releasing now.', '', zoneTimes(event.releaseAt)].join('\n');
+  return [heading(event), 'Releasing now.'].join('\n');
 }
 
 /** Result, rendered as an in-place edit of the release message. */
