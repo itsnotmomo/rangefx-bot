@@ -285,9 +285,25 @@ export async function pendingTentativeResults(
     .from(economicEvents)
     .where(
       and(
+        // or() from drizzle, NOT a raw sql`a or b` chunk.
+        //
+        // A raw OR is interpolated into the AND list without parentheses, and
+        // OR binds looser than AND — so `x AND a OR b AND y` parses as
+        // `(x AND a) OR (b AND y)` and every condition after the OR is
+        // bypassed for any row matching the first branch. That shipped, and it
+        // posted future-dated events with no value to the live group. or()
+        // parenthesises its own group, which is why it is used here.
+        or(eq(economicEvents.isTentative, true), eq(economicEvents.isAllDay, true)),
+        // Non-blank, not merely non-null: an empty string passes IS NOT NULL
+        // but renders as no value at all, which is how one of the bad posts
+        // went out with an empty body.
+        sql`${economicEvents.actual} is not null and btrim(${economicEvents.actual}) <> ''`,
+        // Released ALREADY — an estimated timestamp days in the future is not
+        // a result, and was the other half of the incident.
+        lte(economicEvents.releaseAt, now),
         gt(economicEvents.releaseAt, floor),
-        sql`${economicEvents.isTentative} or ${economicEvents.isAllDay}`,
-        isNotNull(economicEvents.actual),
+        // A speech or statement never prints, so it can never have a result.
+        mayPrintActual,
         noDelivery('result'),
       ),
     )
