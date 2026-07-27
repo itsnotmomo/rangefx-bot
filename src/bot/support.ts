@@ -1,6 +1,7 @@
 import { type Bot } from 'grammy';
 import { config, isAdmin, PLANS, type PlanKey } from '../config/index.js';
 import { getLatestSubscription } from '../services/subscriptions.js';
+import { upsertUser } from '../services/users.js';
 import { recordEvent } from '../services/events.js';
 import { findSupportRoute, saveSupportRoute } from '../services/support.js';
 import { safeCall, safeSendMessage } from '../telegram/safe.js';
@@ -78,6 +79,17 @@ export function registerSupport(bot: Bot): void {
     }
 
     const telegramUserId = BigInt(from.id);
+    // Inbound Telegram activity, same as a /start: it proves the account is
+    // reachable, so any unreachable mark is cleared. Without this, a user who
+    // returned by writing to the desk rather than tapping a menu stayed
+    // excluded from every future broadcast.
+    await upsertUser({
+      telegramUserId,
+      telegramUsername: from.username ?? null,
+      firstName: from.first_name ?? null,
+      source: 'bot',
+      clearBlocked: true,
+    });
     const sub = await getLatestSubscription(telegramUserId);
     const planLabel = sub?.plan ? PLANS[sub.plan as PlanKey]?.label ?? sub.plan : null;
     const statusLine = sub ? `${sub.status}${planLabel ? ` (${planLabel})` : ''}` : 'no subscription';

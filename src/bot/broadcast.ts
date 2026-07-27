@@ -1,6 +1,6 @@
 import { type Api } from 'grammy';
 import { config } from '../config/index.js';
-import { markBlocked } from '../services/users.js';
+import { markBlocked, type UnreachableReason } from '../services/users.js';
 import {
   claimBatch,
   contentOf,
@@ -68,19 +68,24 @@ export function broadcastConcurrency(): number {
 }
 
 /**
- * True when a failure means this recipient can never be reached again, so
- * future broadcasts should skip them and the counts stay honest.
+ * Why this failure retires the recipient, or null if it doesn't.
  *
- *   403 — blocked the bot, deactivated, or kicked.
- *   400 — "chat not found" / "user not found" / invalid peer: the account is
- *         gone. Other 400s (bad markup, caption too long) are payload problems
- *         and must NOT retire the recipient.
+ *   'blocked'  403 — blocked the bot, deactivated, or kicked. Reversible: they
+ *                    re-enter every audience the moment they message us again.
+ *   'deleted'  400 "chat not found" / "user not found" / invalid peer — the
+ *                    account is gone.
+ *
+ * Other 400s (bad markup, caption too long) are payload faults, not recipient
+ * faults, and must NOT retire anyone.
  */
-function isPermanentlyUnreachable(result: { blocked: boolean; code?: number; error: string }): boolean {
-  if (result.blocked || result.code === 403) return true;
-  if (result.code !== 400) return false;
+function unreachableReasonOf(
+  result: { blocked: boolean; code?: number; error: string },
+): UnreachableReason | null {
+  if (result.blocked || result.code === 403) return 'blocked';
+  if (result.code !== 400) return null;
   const d = result.error.toLowerCase();
-  return d.includes('chat not found') || d.includes('user not found') || d.includes('peer_id_invalid');
+  const gone = d.includes('chat not found') || d.includes('user not found') || d.includes('peer_id_invalid');
+  return gone ? 'deleted' : null;
 }
 
 function deliver(api: Api, id: bigint, content: BroadcastContent): Promise<SafeResult<unknown>> {
@@ -211,7 +216,8 @@ export async function runBroadcast(
               await markSent(broadcast.id, id);
             } else {
               await markFailed(broadcast.id, id, result.code ?? null, result.error);
-              if (isPermanentlyUnreachable(result)) await markBlocked(id);
+              const reason = unreachableReasonOf(result);
+              if (reason) await markBlocked(id, reason);
             }
           } catch (err) {
             // Bookkeeping failed, not the send. Log and move on — a stuck row is

@@ -79,7 +79,14 @@ async function resolveTelegramUserId(
   return null;
 }
 
-/** Ensure a users row exists for this id, attaching the Stripe customer id. */
+/**
+ * Ensure a users row exists for this id, attaching the Stripe customer id.
+ *
+ * Deliberately does NOT pass clearBlocked: a Stripe event proves a card was
+ * charged, not that the bot is reachable in Telegram. Un-blocking here put
+ * members who had genuinely blocked us back into every audience, where each
+ * broadcast spent a send on a 403 that just re-marked them.
+ */
 async function ensureUser(telegramUserId: bigint, customerId: string | null, email?: string | null): Promise<void> {
   await upsertUser({
     telegramUserId,

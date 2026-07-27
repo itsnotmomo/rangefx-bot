@@ -1,0 +1,30 @@
+-- Why a user is unreachable, alongside users.blocked_at.
+--
+-- blocked_at is a bare timestamp, so two very different states were being
+-- conflated once the broadcast runner started retiring 400s as well as 403s:
+--
+--   'blocked'  403 — the account exists and has blocked, kicked, or deactivated
+--                    the bot. Reversible: they can come back and press /start.
+--   'deleted'  400 "chat not found" / "user not found" / PEER_ID_INVALID — the
+--                    account is gone. Nothing will arrive from it again.
+--
+-- The distinction decides who may resurrect a user:
+--
+--   Inbound Telegram activity (/start, a menu tap, a support message) clears the
+--   mark REGARDLESS of reason. A message from the account is proof it exists and
+--   is reachable right now, which outranks any stale 400 — a deleted account
+--   cannot send us anything, and Telegram returns that 400 for transient causes
+--   too.
+--
+--   Stripe webhooks clear nothing. A renewal invoice says a card charged; it
+--   says nothing about whether the bot is blocked in Telegram. Clearing there
+--   silently un-blocked paying members who had genuinely blocked the bot, put
+--   them back in every audience, and burned a send slot per broadcast on a 403
+--   that re-marked them.
+--
+-- Backfill: every existing blocked_at row predates the 400 path and is a 403, so
+-- NULL is read as 'blocked' (clearable) and no data migration is needed.
+--
+-- Idempotent: safe to run repeatedly.
+
+ALTER TABLE users ADD COLUMN IF NOT EXISTS unreachable_reason text;

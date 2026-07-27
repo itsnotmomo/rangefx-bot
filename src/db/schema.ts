@@ -59,8 +59,17 @@ export const users = pgTable('users', {
   viewedPlansAt: timestamp('viewed_plans_at', { withTimezone: true }),
   openedCheckoutAt: timestamp('opened_checkout_at', { withTimezone: true }),
   paidAt: timestamp('paid_at', { withTimezone: true }),
-  /** Set when a send hits a 403 (user blocked the bot); cleared on inbound activity. */
+  /**
+   * Set when a send proves the user unreachable — a 403 (blocked/deactivated) or
+   * a 400 "chat not found" (deleted). Excluded from every audience while set.
+   * Cleared by genuine inbound Telegram activity, never by a Stripe webhook.
+   */
   blockedAt: timestamp('blocked_at', { withTimezone: true }),
+  /**
+   * Why: 'blocked' (403, reversible) | 'deleted' (400, account gone). NULL on
+   * rows written before this column existed, all of which were 403s.
+   */
+  unreachableReason: text('unreachable_reason'),
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   stripeCustomerIdx: index('users_stripe_customer_idx').on(t.stripeCustomerId),

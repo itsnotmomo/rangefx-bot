@@ -45,6 +45,9 @@ async function captureUser(ctx: Context, acquisitionSource?: string): Promise<vo
     firstName: from.first_name ?? null,
     source: 'bot',
     acquisitionSource: acquisitionSource ?? null,
+    // This IS inbound Telegram activity, so it proves reachability: any
+    // unreachable mark is cleared and the user re-enters future audiences.
+    clearBlocked: true,
   });
 }
 
