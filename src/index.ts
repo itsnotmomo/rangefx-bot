@@ -10,6 +10,7 @@ import { createStripeWebhookHandler } from './stripe/webhook.js';
 import { safeCall } from './telegram/safe.js';
 import { scheduleGraceJob } from './jobs/grace-period.js';
 import { scheduleFollowupJob } from './jobs/followups.js';
+import { scheduleNewsJobs } from './news/jobs.js';
 
 async function main(): Promise<void> {
   // 1. Schema first — safe/idempotent, so every deploy self-heals.
@@ -36,6 +37,8 @@ async function main(): Promise<void> {
     { command: 'broadcast', description: 'Message an audience' },
     { command: 'reply', description: 'Answer a support message' },
     { command: 'find', description: 'Look up a user' },
+    { command: 'news_status', description: 'Economic calendar status' },
+    { command: 'news_here', description: 'Show this chat + topic id' },
   ];
   await bot.api.setMyCommands(publicCommands);
   for (const adminId of config.adminUserIds) {
@@ -92,6 +95,9 @@ async function main(): Promise<void> {
   // 5. Cron jobs: daily grace-period reconciliation + lead follow-up delivery.
   scheduleGraceJob(bot.api);
   scheduleFollowupJob(bot.api);
+  // Economic calendar. Self-gating: dormant unless NEWS_ENABLED is on AND
+  // NEWS_CHAT_ID is set, so this posts nothing by default.
+  scheduleNewsJobs(bot.api);
 
   // Graceful shutdown.
   const shutdown = async (signal: string) => {

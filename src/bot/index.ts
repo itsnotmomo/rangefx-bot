@@ -27,6 +27,7 @@ import {
 } from './keyboards.js';
 import { renderStatus } from './status.js';
 import { registerAdminCommands } from './admin.js';
+import { registerNewsCommands } from '../news/admin.js';
 import { registerBroadcastFlow } from './broadcast-flow.js';
 import { registerSupport } from './support.js';
 import { notifyStart } from './notifications.js';
@@ -136,6 +137,10 @@ export function buildBot(): Bot {
   // Admin-only commands (/stats, /find) — self-gated to ADMIN_USER_IDS;
   // non-admins fall through to the unknown-command response.
   registerAdminCommands(bot);
+
+  // Economic calendar admin tooling (/news_status, /news_test, /news_pause,
+  // /news_resume, /news_here). Same admin gate, same fall-through convention.
+  registerNewsCommands(bot);
 
   // Interactive /broadcast (+ /cancel). Its content-capture message handler
   // passes through everything that isn't an awaited broadcast draft.
