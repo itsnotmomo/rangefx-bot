@@ -137,6 +137,12 @@ export class TradingEconomicsProvider implements CalendarProvider {
 
   private readonly apiKey: string;
 
+  /**
+   * TE's range query takes no row limit, so it has no limit to hit. Assigned on
+   * every fetch anyway to honour the interface contract.
+   */
+  lastFetchTruncated = false;
+
   constructor(apiKey: string = newsConfig.teApiKey) {
     this.apiKey = apiKey;
     if (this.isGuest) {
@@ -205,6 +211,7 @@ export class TradingEconomicsProvider implements CalendarProvider {
   }
 
   async fetchUpcoming(from: Date, to: Date): Promise<RawEvent[]> {
+    this.lastFetchTruncated = false;
     const url = `${BASE_URL}/country/all/${isoDate(from)}/${isoDate(to)}?c=${encodeURIComponent(this.apiKey)}&f=json`;
     const rows = await this.request(url, 'calendar');
     if (rows === null) return [];

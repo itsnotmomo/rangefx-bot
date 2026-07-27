@@ -42,6 +42,19 @@ export interface ResultQuery {
 
 export interface CalendarProvider {
   name: string;
+
+  /**
+   * Whether the LAST fetchUpcoming call came back at the provider's row limit,
+   * meaning the window was probably cut short and events were silently dropped.
+   *
+   * Adapters MUST assign this on every fetchUpcoming call — false as well as
+   * true — so a stale `true` can never outlive the import that caused it.
+   * The import job reads it immediately after the call and persists it, because
+   * a truncated calendar is indistinguishable from a quiet one at read time,
+   * and that is the one failure this design cannot tolerate silently.
+   */
+  lastFetchTruncated: boolean;
+
   fetchUpcoming(from: Date, to: Date): Promise<RawEvent[]>;
 
   /**

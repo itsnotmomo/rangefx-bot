@@ -1,4 +1,5 @@
 import { boolOf, intOf, optional } from '../config/env.js';
+import { log } from '../util/logger.js';
 
 /**
  * News-module configuration.
@@ -16,6 +17,52 @@ export const LONDON_TZ = 'Europe/London';
 
 /** Trading Economics' long-dead public credential. Kept as the documented default. */
 export const TE_GUEST_KEY = 'guest:guest';
+
+/** Default monthly request ceiling when NEWS_MONTHLY_REQUEST_CAP is not set. */
+const DEFAULT_MONTHLY_CAP = 900;
+
+/** Sentinel meaning "no ceiling". Infinity so comparisons need no special case. */
+export const UNLIMITED_CAP = Number.POSITIVE_INFINITY;
+
+/**
+ * Parse the monthly request cap.
+ *
+ * The semantics are deliberately asymmetric, because this is a billing guard
+ * and ambiguous input must fail toward NOT spending:
+ *
+ *   unset / empty      -> 900 (the default; the common, safe case)
+ *   'unlimited' | '-1' -> no ceiling. Disabling the guard requires saying so
+ *                         explicitly — it is never the result of a typo.
+ *   0                  -> BLOCK every provider call. A literal zero budget
+ *                         means zero requests, not "unlimited".
+ *   any other negative -> BLOCK. Only the -1 sentinel disables.
+ *   non-numeric        -> BLOCK, loudly. We do not know what was intended, and
+ *                         guessing "unlimited" could cost money.
+ */
+export function parseMonthlyCap(raw: string): number {
+  const s = raw.trim().toLowerCase();
+  if (s === '') return DEFAULT_MONTHLY_CAP;
+  if (s === 'unlimited' || s === '-1') return UNLIMITED_CAP;
+
+  const n = Number.parseInt(s, 10);
+  if (Number.isNaN(n)) {
+    log.error(
+      'NEWS_MONTHLY_REQUEST_CAP is not a number — blocking all provider calls. ' +
+        'Set a positive integer, or "unlimited" (or -1) to disable the cap.',
+      { value: raw },
+    );
+    return 0;
+  }
+  if (n < 0) {
+    log.error(
+      'NEWS_MONTHLY_REQUEST_CAP is negative — blocking all provider calls. ' +
+        'Only -1 (or "unlimited") disables the cap.',
+      { value: raw },
+    );
+    return 0;
+  }
+  return n;
+}
 
 export const newsConfig = {
   enabled: boolOf('NEWS_ENABLED', false),
@@ -49,8 +96,9 @@ export const newsConfig = {
   /**
    * Hard ceiling on provider requests per UTC calendar month. Billing safety,
    * not telemetry: at the cap every provider call stops outright.
+   * See parseMonthlyCap for why 0 blocks rather than disables.
    */
-  monthlyRequestCap: intOf('NEWS_MONTHLY_REQUEST_CAP', 900),
+  monthlyRequestCap: parseMonthlyCap(optional('NEWS_MONTHLY_REQUEST_CAP', '')),
 } as const;
 
 /**
@@ -61,7 +109,9 @@ export const cadence = {
   importIntervalMinutes: Math.min(Math.max(newsConfig.importIntervalMinutes, 1), 1440),
   pollIntervalSeconds: Math.min(Math.max(newsConfig.pollIntervalSeconds, 5), 3600),
   pollWindowMinutes: Math.min(Math.max(newsConfig.pollWindowMinutes, 1), 120),
-  monthlyRequestCap: Math.max(newsConfig.monthlyRequestCap, 0),
+  // Passed through unclamped: 0 legitimately means "block everything" and
+  // Infinity legitimately means "no ceiling". Clamping would destroy both.
+  monthlyRequestCap: newsConfig.monthlyRequestCap,
 } as const;
 
 /**

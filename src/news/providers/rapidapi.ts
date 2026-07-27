@@ -92,6 +92,9 @@ export class RapidApiProvider implements CalendarProvider {
   /** Latched so a broken timestamp contract warns once, not once per row. */
   private warnedMissingZone = false;
 
+  /** Set on every fetchUpcoming — see CalendarProvider.lastFetchTruncated. */
+  lastFetchTruncated = false;
+
   constructor(apiKey: string = newsConfig.rapidApiKey) {
     this.apiKey = apiKey;
     if (!this.apiKey) {
@@ -203,8 +206,30 @@ export class RapidApiProvider implements CalendarProvider {
   }
 
   async fetchUpcoming(from: Date, to: Date): Promise<RawEvent[]> {
+    // Reset first: a stale `true` from a previous import must never leak into
+    // this one's status.
+    this.lastFetchTruncated = false;
+
     const rows = await this.request(this.buildUrl(from, to, MAX_LIMIT), 'calendar');
     if (rows === null) return [];
+
+    // Exactly (or above) the requested limit means the provider stopped
+    // counting, not that the calendar ended there.
+    if (rows.length >= MAX_LIMIT) {
+      this.lastFetchTruncated = true;
+      log.error(
+        `RapidAPI returned ${rows.length} rows at the requested limit of ${MAX_LIMIT} — the ` +
+          'import window MAY BE TRUNCATED and events may have been dropped. Narrow the ' +
+          'import horizon or raise the limit; do not treat this calendar as complete.',
+        {
+          provider: this.name,
+          limit: MAX_LIMIT,
+          returned: rows.length,
+          from: isoDate(from),
+          to: isoDate(to),
+        },
+      );
+    }
 
     if (rows.length === 0) {
       log.warn('RapidAPI returned 0 calendar rows — check the plan/date range before debugging the importer', {
@@ -228,7 +253,7 @@ export class RapidApiProvider implements CalendarProvider {
       returned: rows.length,
       mapped: mapped.length,
       dropped,
-      truncated: rows.length >= MAX_LIMIT,
+      truncated: this.lastFetchTruncated,
     });
 
     return mapped;

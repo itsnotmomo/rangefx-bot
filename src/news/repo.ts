@@ -45,10 +45,15 @@ export async function setPaused(paused: boolean): Promise<void> {
     .where(eq(newsSettings.id, SETTINGS_ID));
 }
 
-export async function markImported(at: Date = new Date()): Promise<void> {
+/**
+ * Stamp a completed import. `truncated` is written on every run, including the
+ * clean ones, so the flag reflects the CURRENT state rather than latching on
+ * the first bad import and never clearing.
+ */
+export async function markImported(at: Date = new Date(), truncated = false): Promise<void> {
   await db
     .update(newsSettings)
-    .set({ lastImportAt: at, updatedAt: new Date() })
+    .set({ lastImportAt: at, lastImportTruncated: truncated, updatedAt: new Date() })
     .where(eq(newsSettings.id, SETTINGS_ID));
 }
 
@@ -358,6 +363,8 @@ export async function pruneProviderRequests(): Promise<void> {
 
 export interface StatusSnapshot {
   lastImportAt: Date | null;
+  /** True when the last import hit the provider's row limit — events may be missing. */
+  lastImportTruncated: boolean;
   paused: boolean;
   currencies: string;
   minImpact: Impact;
@@ -392,6 +399,7 @@ export async function statusSnapshot(now: Date = new Date(), limit = 5): Promise
 
   return {
     lastImportAt: settings.lastImportAt,
+    lastImportTruncated: settings.lastImportTruncated,
     paused: settings.paused,
     currencies: settings.currencies,
     minImpact: settings.minImpact,

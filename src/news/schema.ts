@@ -84,6 +84,8 @@ export const newsSettings = pgTable('news_settings', {
   lastImportAt: timestamp('last_import_at', { withTimezone: true }),
   /** 'YYYY-MM' (UTC) in which the quota-cap DM was already sent. Self-resetting. */
   capNotifiedMonth: text('cap_notified_month'),
+  /** True when the last import came back at the provider's row limit. */
+  lastImportTruncated: boolean('last_import_truncated').notNull().default(false),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

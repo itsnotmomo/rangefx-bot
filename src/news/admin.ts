@@ -13,7 +13,7 @@ import {
 import { bothTimes } from './format.js';
 import { activeProvider, mockProvider } from './providers/index.js';
 import { providerUsage, setPaused, statusSnapshot, upsertOneEvent } from './repo.js';
-import { quotaState } from './quota.js';
+import { capDisabled, quotaState } from './quota.js';
 import { runImport } from './jobs.js';
 
 /**
@@ -65,6 +65,12 @@ export function registerNewsCommands(bot: Bot): void {
     const lines = [
       'Range Compound — news module',
       '',
+      // Conditions that make the calendar untrustworthy go at the very top,
+      // not buried in the detail below.
+      ...(snapshot.lastImportTruncated
+        ? ['⚠ LAST IMPORT WAS TRUNCATED — the calendar may be incomplete.', '']
+        : []),
+      ...(quota.exceeded ? ['⚠ MONTHLY REQUEST CAP REACHED — provider calls are blocked.', ''] : []),
       `State:      ${newsConfigured() ? (snapshot.paused ? 'configured, PAUSED' : 'live') : 'dormant (NEWS_ENABLED off or NEWS_CHAT_ID unset)'}`,
       `Provider:   ${provider.name} (NEWS_PROVIDER=${newsConfig.provider})`,
       `Chat:       ${newsChatId() ?? '—'}${newsTopicId() !== undefined ? ` · topic ${newsTopicId()}` : ' · no topic set'}`,
@@ -85,12 +91,21 @@ export function registerNewsCommands(bot: Bot): void {
       `  last run:   ${ago(snapshot.lastImportAt)}${snapshot.lastImportAt ? ` (${fullTime(snapshot.lastImportAt)})` : ''}`,
       `  stored:     ${snapshot.totalEvents} events · ${snapshot.upcomingCount} upcoming`,
       `  awaiting result: ${snapshot.awaitingResult}`,
+      `  truncated:  ${
+        snapshot.lastImportTruncated
+          ? 'YES — last import hit the provider row limit; events may be MISSING'
+          : 'no'
+      }`,
       '',
       `Provider requests (${provider.name})`,
       `  last 24h:      ${usage.last24h}`,
       `  rolling 30d:   ${usage.rolling30d}`,
-      `  month to date: ${usage.monthToDate}${quota.cap > 0 ? ` / ${quota.cap} cap` : ' (no cap set)'}`,
-      `  remaining:     ${quota.cap > 0 ? `${quota.remaining}${quota.exceeded ? '  ← CAP REACHED, calls blocked' : ''}` : 'unlimited'}`,
+      `  month to date: ${usage.monthToDate}${capDisabled(quota.cap) ? '  (cap DISABLED)' : ` / ${quota.cap} cap`}`,
+      `  remaining:     ${
+        capDisabled(quota.cap)
+          ? 'unlimited'
+          : `${quota.remaining}${quota.exceeded ? '  ← CAP REACHED, all provider calls blocked' : ''}`
+      }`,
       `  failed (30d):  ${usage.failures30d}`,
     ];
 

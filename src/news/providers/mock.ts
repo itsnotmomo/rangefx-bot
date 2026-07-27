@@ -28,6 +28,9 @@ export class MockProvider implements CalendarProvider {
 
   private counter = 0;
 
+  /** Synthetic events are never limited, so this is always false. */
+  lastFetchTruncated = false;
+
   /**
    * Create a synthetic high-impact event `minutesFromNow` out.
    *
@@ -69,6 +72,7 @@ export class MockProvider implements CalendarProvider {
   }
 
   async fetchUpcoming(from: Date, to: Date): Promise<RawEvent[]> {
+    this.lastFetchTruncated = false;
     const out: RawEvent[] = [];
     for (const { event } of this.events.values()) {
       if (event.releaseAt >= from && event.releaseAt <= to) out.push(event);

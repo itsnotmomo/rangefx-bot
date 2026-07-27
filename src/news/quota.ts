@@ -31,10 +31,18 @@ export interface QuotaState {
 export async function quotaState(provider: string, at: Date = new Date()): Promise<QuotaState> {
   const cap = cadence.monthlyRequestCap;
   const used = await monthToDateRequests(provider, utcMonthStart(at));
-  // A cap of 0 means "no cap" rather than "block everything" — an operator who
-  // clears the variable expects it disabled, not the module bricked.
-  if (cap <= 0) return { used, cap: 0, remaining: Number.POSITIVE_INFINITY, exceeded: false };
+
+  // Only the explicit 'unlimited' / -1 sentinel disables the ceiling. A cap of
+  // 0 is a real budget of zero and blocks everything — see parseMonthlyCap.
+  if (!Number.isFinite(cap)) {
+    return { used, cap, remaining: Number.POSITIVE_INFINITY, exceeded: false };
+  }
   return { used, cap, remaining: Math.max(0, cap - used), exceeded: used >= cap };
+}
+
+/** Whether the ceiling is switched off entirely (the explicit sentinel). */
+export function capDisabled(cap: number): boolean {
+  return !Number.isFinite(cap);
 }
 
 /**

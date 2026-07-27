@@ -80,10 +80,12 @@ export async function runImport(api: Api): Promise<void> {
   const to = new Date(from.getTime() + IMPORT_HORIZON_HOURS * 3_600_000);
 
   const fetched = await provider.fetchUpcoming(from, to);
+  // Read immediately after the call, before anything else can overwrite it.
+  const truncated = provider.lastFetchTruncated;
   const kept = fetched.filter((e) => passesFilter(settings, e.currency, e.impact));
   const written = await upsertEvents(provider.name, kept);
 
-  await markImported();
+  await markImported(new Date(), truncated);
   // Cheap housekeeping on the slowest schedule we have.
   await pruneProviderRequests();
   mockProvider.prune();
@@ -93,6 +95,7 @@ export async function runImport(api: Api): Promise<void> {
     fetched: fetched.length,
     kept: kept.length,
     written,
+    truncated,
     currencies: settings.currencies,
     minImpact: settings.minImpact,
   });
