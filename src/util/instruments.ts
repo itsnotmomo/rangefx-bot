@@ -28,23 +28,22 @@ export function instrumentName(symbol: string): string {
 }
 
 /**
- * Instruments that reliably move on USD/EUR/JPY high-impact prints, in the
- * order they are read out.
+ * Which of the desk's instruments a release in a given currency actually
+ * moves, in reading order.
+ *
+ * Replaces a single hardcoded list that claimed every print moved everything.
+ * A currency absent from this map moves nothing the desk trades, and the
+ * impact line is omitted rather than padded with instruments that are not
+ * really implicated.
  */
-export const WATCHED_INSTRUMENTS = ['EURUSD', 'XAUUSD', 'EURJPY'] as const;
+export const CURRENCY_INSTRUMENTS: Record<string, readonly string[]> = {
+  USD: ['EURUSD', 'XAUUSD'],
+  EUR: ['EURUSD', 'EURJPY'],
+  JPY: ['EURJPY'],
+};
 
-/**
- * Join with an Oxford-style "and" before the final item:
- * "EUR/USD, Gold, and EUR/JPY".
- */
-export function oxfordList(items: string[]): string {
-  if (items.length === 0) return '';
-  if (items.length === 1) return items[0]!;
-  if (items.length === 2) return `${items[0]} and ${items[1]}`;
-  return `${items.slice(0, -1).join(', ')}, and ${items[items.length - 1]}`;
-}
-
-/** "EUR/USD, Gold, and EUR/JPY" — the watched set, named for members. */
-export function watchedInstrumentsSentence(): string {
-  return oxfordList(WATCHED_INSTRUMENTS.map(instrumentName));
+/** Display names of the instruments a currency moves; empty if none. */
+export function impactedInstruments(currency: string): string[] {
+  const tickers = CURRENCY_INSTRUMENTS[currency.trim().toUpperCase()] ?? [];
+  return tickers.map(instrumentName);
 }

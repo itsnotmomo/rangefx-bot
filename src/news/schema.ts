@@ -50,6 +50,8 @@ export const economicEvents = pgTable('economic_events', {
   forecast: text('forecast'),
   actual: text('actual'),
   revised: text('revised'),
+  /** Unit for the readings above, e.g. "%" or "Jobs". Applied at render time. */
+  unit: text('unit'),
   actualReceivedAt: timestamp('actual_received_at', { withTimezone: true }),
 
   // --- Provider classification. These change behaviour; see 0011.

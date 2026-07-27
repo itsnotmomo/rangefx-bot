@@ -64,11 +64,12 @@ export function registerNewsCommands(bot: Bot): void {
       'Range Compound — news module',
       '',
       // Conditions that make the calendar untrustworthy go at the very top,
-      // not buried in the detail below.
+      // not buried in the detail below. Plain text: emoji are reserved for
+      // member-facing messages, where they carry meaning as stage markers.
       ...(snapshot.lastImportTruncated
-        ? ['⚠ LAST IMPORT WAS TRUNCATED — the calendar may be incomplete.', '']
+        ? ['WARNING: last import was TRUNCATED — the calendar may be incomplete.', '']
         : []),
-      ...(quota.exceeded ? ['⚠ MONTHLY REQUEST CAP REACHED — provider calls are blocked.', ''] : []),
+      ...(quota.exceeded ? ['WARNING: monthly request cap REACHED — provider calls are blocked.', ''] : []),
       `State:      ${newsConfigured() ? (snapshot.paused ? 'configured, PAUSED' : 'live') : 'dormant (NEWS_ENABLED off or NEWS_CHAT_ID unset)'}`,
       `Provider:   ${provider.name} (NEWS_PROVIDER=${newsConfig.provider})`,
       `Chat:       ${newsChatId() ?? '—'}${newsTopicId() !== undefined ? ` · topic ${newsTopicId()}` : ' · no topic set'}`,
@@ -102,7 +103,7 @@ export function registerNewsCommands(bot: Bot): void {
       `  remaining:     ${
         capDisabled(quota.cap)
           ? 'unlimited'
-          : `${quota.remaining}${quota.exceeded ? '  ← CAP REACHED, all provider calls blocked' : ''}`
+          : `${quota.remaining}${quota.exceeded ? '  (CAP REACHED, all provider calls blocked)' : ''}`
       }`,
       `  failed (30d):  ${usage.failures30d}`,
     ];

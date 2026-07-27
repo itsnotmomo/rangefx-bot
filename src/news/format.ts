@@ -1,4 +1,4 @@
-import { watchedInstrumentsSentence } from '../util/instruments.js';
+import { impactedInstruments } from '../util/instruments.js';
 import { type EconomicEvent, timeIsUnscheduled } from './schema.js';
 
 /**
@@ -9,8 +9,45 @@ import { type EconomicEvent, timeIsUnscheduled } from './schema.js';
  * USD-positive, no buy/sell, no "watch for a move higher". The deviation line
  * is arithmetic — a subtraction rendered in the reading's own unit — and the
  * desk draws the conclusion. Any future edit that adds a directional word is
- * a regression, not a feature.
+ * a regression, not a feature. The 📈/📉 markers describe the arithmetic
+ * relative to forecast, nothing about price.
+ *
+ * These post into a topic shared with live trade execution, so every message
+ * is built to be recognised in a glance: a stage marker and a flag in fixed
+ * leading positions, then the shortest line that still carries the facts.
+ *
+ * Emoji discipline: they appear ONLY as leading markers, in the positions
+ * defined here. Never mid-sentence, and never in /news_status or any other
+ * admin output — those stay plain text.
  */
+
+/** Stage markers. Always the first character of the message's first line. */
+const MARK_UPCOMING = '⏳';
+const MARK_RELEASING = '🔴';
+const MARK_RESULT = '✅';
+const MARK_UNSCHEDULED = '📅';
+const MARK_IMPACT = '⚡';
+const MARK_ABOVE = '📈';
+const MARK_BELOW = '📉';
+const MARK_INLINE = '➖';
+
+/**
+ * Currency flags. An unmapped currency gets NO flag rather than a wrong one —
+ * a misattributed country is worse than a missing decoration.
+ */
+const CURRENCY_FLAG: Record<string, string> = {
+  USD: '🇺🇸',
+  EUR: '🇪🇺',
+  JPY: '🇯🇵',
+  GBP: '🇬🇧',
+};
+
+/** "🇺🇸 USD" — or plain "CHF" when the currency has no flag. */
+function currencyLabel(currency: string): string {
+  const code = currency.trim().toUpperCase();
+  const flag = CURRENCY_FLAG[code];
+  return flag ? `${flag} ${esc(code)}` : esc(code);
+}
 
 /**
  * The three desks a release is read from, in reading order.
@@ -118,6 +155,29 @@ export function parseReading(raw: string | null): Reading | null {
   return { value, unit: (m[2] ?? '').toUpperCase() };
 }
 
+/**
+ * Attach the provider's unit to a reading.
+ *
+ * Providers send the number and its unit separately, so a consensus of 1 with
+ * unit "%" arrived in the topic as a bare "1" — meaningless on its own and
+ * easy to misread by an order of magnitude.
+ *
+ * Applied before the deviation is computed, so the arithmetic sees percentages
+ * as percentages and reports points rather than a bare difference.
+ *
+ * Skipped when the value already expresses the unit, either literally
+ * ("1%" with unit "%") or through its own magnitude suffix — "216K" carrying
+ * unit "Jobs" must not become "216K Jobs".
+ */
+export function withUnit(value: string | null, unit: string | null | undefined): string | null {
+  if (!value) return value;
+  const u = (unit ?? '').trim();
+  if (!u) return value;
+  if (value.toLowerCase().endsWith(u.toLowerCase())) return value;
+  if (/[%KMBT]$/i.test(value)) return value;
+  return u === '%' ? `${value}%` : `${value} ${u}`;
+}
+
 /** Trim float noise: 0.19999999999999996 -> "0.2". */
 function trimNumber(n: number): string {
   return String(Number(n.toFixed(4)));
@@ -141,19 +201,37 @@ export function deviationLine(actual: string | null, forecast: string | null): s
   if (!a || !f || a.unit !== f.unit) return null;
 
   const diff = a.value - f.value;
-  if (diff === 0) return 'Actual in line with forecast.';
-  const direction = diff > 0 ? 'above' : 'below';
-  return `Actual ${direction} forecast by ${formatDelta(Math.abs(diff), a.unit)}.`;
+  if (diff === 0) return `${MARK_INLINE} In line with forecast`;
+  const marker = diff > 0 ? MARK_ABOVE : MARK_BELOW;
+  const direction = diff > 0 ? 'Above' : 'Below';
+  return `${marker} ${direction} forecast by ${formatDelta(Math.abs(diff), a.unit)}`;
 }
 
-/** "USD · Non-Farm Payrolls", escaped and bolded. */
-function heading(event: Pick<EconomicEvent, 'currency' | 'title'>): string {
-  return `<b>${esc(event.currency)} · ${esc(event.title)}</b>`;
+/** "🇺🇸 USD · Non-Farm Payrolls" — the identity line shared by release and result. */
+function identity(event: Pick<EconomicEvent, 'currency' | 'title'>): string {
+  return `${currencyLabel(event.currency)} · ${esc(event.title)}`;
 }
 
-/** "Forecast: 180K" for each reading that exists. */
-function readingLines(pairs: Array<[string, string | null]>): string[] {
-  return pairs.filter(([, v]) => v !== null && v !== '').map(([label, v]) => `${label}: ${esc(v!)}`);
+/**
+ * "Forecast 180K · Previous 145K" from the readings that exist, or null when
+ * none do — so a value-less event drops the line rather than printing labels
+ * with nothing after them.
+ */
+function valuesLine(pairs: Array<[string, string | null]>): string | null {
+  const parts = pairs
+    .filter(([, v]) => v !== null && v.trim() !== '')
+    .map(([label, v]) => `${label} ${esc(v!)}`);
+  return parts.length > 0 ? parts.join(' · ') : null;
+}
+
+/**
+ * "⚡ Impact on: EUR/USD · Gold", or null when this currency moves nothing the
+ * desk trades — in which case the line is omitted rather than padded.
+ */
+function impactLine(currency: string): string | null {
+  const instruments = impactedInstruments(currency);
+  if (instruments.length === 0) return null;
+  return `${MARK_IMPACT} Impact on: ${instruments.map(esc).join(' · ')}`;
 }
 
 /**
@@ -170,16 +248,25 @@ function readingLines(pairs: Array<[string, string | null]>): string[] {
  */
 export function renderReminder(event: EconomicEvent): string {
   // A speech or press conference begins; it does not release.
-  const lines = [heading(event), event.isSpeech ? 'Begins in 5 minutes.' : 'Releases in 5 minutes.', ''];
-  // Speeches and statements carry no numbers. Omit the block entirely rather
-  // than printing empty labels.
-  const readings = readingLines([
-    ['Previous', event.previous],
-    ['Forecast', event.forecast],
+  const kind = event.isSpeech ? 'speech' : 'news';
+  const lines = [
+    `${MARK_UPCOMING} ${currencyLabel(event.currency)} ${kind} in 5 minutes`,
+    esc(event.title),
+  ];
+
+  // Speeches and statements carry no numbers — drop the line, not just its
+  // contents, so no empty gap is left behind.
+  const values = valuesLine([
+    ['Forecast', withUnit(event.forecast, event.unit)],
+    ['Previous', withUnit(event.previous, event.unit)],
   ]);
-  if (readings.length > 0) lines.push(...readings, '');
-  lines.push(zoneTimes(event.releaseAt), '');
-  lines.push(`Elevated volatility expected on ${watchedInstrumentsSentence()}.`);
+  if (values) lines.push('', values);
+
+  lines.push('', zoneTimes(event.releaseAt));
+
+  const impact = impactLine(event.currency);
+  if (impact) lines.push('', impact);
+
   return lines.join('\n');
 }
 
@@ -191,7 +278,8 @@ export function renderReminder(event: EconomicEvent): string {
  * timestamp.
  */
 export function renderRelease(event: EconomicEvent): string {
-  return [heading(event), event.isSpeech ? 'Starting now.' : 'Releasing now.'].join('\n');
+  // One line: it lands mid-execution and only has to say "this is happening".
+  return `${MARK_RELEASING} ${identity(event)} — ${event.isSpeech ? 'starting now' : 'releasing now'}`;
 }
 
 /**
@@ -204,17 +292,24 @@ export function renderRelease(event: EconomicEvent): string {
  */
 export function renderResult(event: EconomicEvent): string {
   const lines: string[] = [];
-  if (timeIsUnscheduled(event)) lines.push('Release time was not scheduled in advance.', '');
-  lines.push(heading(event), '');
-  lines.push(
-    ...readingLines([
-      ['Actual', event.actual],
-      ['Forecast', event.forecast],
-      ['Previous', event.previous],
-      ['Revised', event.revised],
-    ]),
-  );
-  const deviation = deviationLine(event.actual, event.forecast);
-  if (deviation) lines.push('', deviation);
+  if (timeIsUnscheduled(event)) lines.push(`${MARK_UNSCHEDULED} Time was not scheduled in advance`);
+
+  lines.push(`${MARK_RESULT} ${identity(event)}`);
+
+  // Units applied before the deviation, so percentages compare as percentages.
+  const actual = withUnit(event.actual, event.unit);
+  const forecast = withUnit(event.forecast, event.unit);
+
+  const values = valuesLine([
+    ['Actual', actual],
+    ['Forecast', forecast],
+    ['Previous', withUnit(event.previous, event.unit)],
+    ['Revised', withUnit(event.revised, event.unit)],
+  ]);
+  if (values) lines.push(values);
+
+  const deviation = deviationLine(actual, forecast);
+  if (deviation) lines.push(deviation);
+
   return lines.join('\n');
 }

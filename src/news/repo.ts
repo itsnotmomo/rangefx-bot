@@ -99,6 +99,7 @@ export async function upsertEvents(provider: string, events: RawEvent[]): Promis
     forecast: e.forecast,
     actual: e.actual,
     revised: e.revised,
+    unit: e.unit ?? null,
     isTentative: e.isTentative ?? false,
     isAllDay: e.isAllDay ?? false,
     isSpeech: e.isSpeech ?? false,
@@ -126,6 +127,7 @@ export async function upsertEvents(provider: string, events: RawEvent[]): Promis
         forecast: sql`excluded.forecast`,
         actual: sql`coalesce(excluded.actual, ${economicEvents.actual})`,
         revised: sql`coalesce(excluded.revised, ${economicEvents.revised})`,
+        unit: sql`coalesce(excluded.unit, ${economicEvents.unit})`,
         // Overwritten rather than coalesced: these are never null, and a
         // provider that reclassifies an event (tentative -> scheduled once the
         // time is fixed) must be able to say so.

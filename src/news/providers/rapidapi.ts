@@ -246,6 +246,7 @@ export class RapidApiProvider implements CalendarProvider {
       forecast: reading(row.consensus),
       actual: reading(row.actual),
       revised: reading(row.revised),
+      unit: reading(row.unit),
       // Strict === true: an absent flag must mean "ordinary scheduled event",
       // never something truthy-but-unexpected changing how we post.
       isTentative: row.isTentative === true,
