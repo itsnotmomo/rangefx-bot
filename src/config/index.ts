@@ -82,13 +82,21 @@ export const config = {
   /** How long a one-time group invite link stays valid, in hours. */
   inviteExpiryHours: intOf('INVITE_EXPIRY_HOURS', 24),
 
-  // Broadcast throttling (Telegram allows ~30 msg/s globally to different users).
+  /**
+   * GLOBAL broadcast ceiling in messages/second, across the whole worker pool
+   * (not per worker). Telegram documents ~30/s to distinct users; the default
+   * sits just under it because the costs are asymmetric — 25→30 saves about a
+   * minute over an 11k send, while one 429 with a 30s retry_after stalls every
+   * worker for longer than that.
+   */
   broadcastPerSecond: intOf('BROADCAST_PER_SECOND', 25),
   /**
-   * Photo sends are heavier than text on Telegram's side and draw 429s sooner,
-   * so they get their own, lower default.
+   * Concurrent senders. Throughput is set by broadcastPerSecond above; this
+   * only decides how much Telegram latency the pool can absorb before the
+   * ceiling stops being reachable (need ≈ rate × latency: 4 at 150ms, 25 at 1s).
+   * Surplus workers park inside the rate limiter and cost nothing.
    */
-  broadcastPhotoPerSecond: intOf('BROADCAST_PHOTO_PER_SECOND', 15),
+  broadcastConcurrency: intOf('BROADCAST_CONCURRENCY', 25),
 
   /**
    * DM admins when a user starts the bot for the first time. Turn off during

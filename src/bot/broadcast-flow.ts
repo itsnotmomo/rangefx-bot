@@ -19,7 +19,13 @@ import {
   type BroadcastContent,
 } from '../services/broadcasts.js';
 import { findSupportRoute } from '../services/support.js';
-import { activeBroadcastId, rateFor, runBroadcast, summaryLines } from './broadcast.js';
+import {
+  activeBroadcastId,
+  broadcastConcurrency,
+  broadcastRate,
+  runBroadcast,
+  summaryLines,
+} from './broadcast.js';
 import { type Broadcast } from '../db/schema.js';
 import { safeCall, safeSendMessage } from '../telegram/safe.js';
 import { log } from '../util/logger.js';
@@ -53,6 +59,12 @@ const AUDIENCE_KEYS: AudienceKey[] = ['all', 'leads', 'churned', 'active'];
 function requireAdmin(ctx: Context): boolean {
   const uid = ctx.from?.id;
   return uid !== undefined && isAdmin(uid);
+}
+
+/** Wall-clock estimate at the global rate, e.g. "7.6 min". */
+function etaMinutes(recipients: number): string {
+  const seconds = recipients / broadcastRate();
+  return seconds < 90 ? `${Math.round(seconds)} sec` : `${(seconds / 60).toFixed(1)} min`;
 }
 
 /** DM every admin. Never throws — used from detached code paths. */
@@ -290,7 +302,8 @@ export function registerBroadcastFlow(bot: Bot): void {
       [
         `Broadcast #${broadcast.id} queued.`,
         `Audience: ${AUDIENCE_LABEL[state.audience]} — ${ids.length} recipients.`,
-        `Rate: ${rateFor(state.content)}/sec (${broadcast.kind}).`,
+        `Rate: ${broadcastRate()}/sec across ${broadcastConcurrency()} workers.`,
+        `Estimated: ~${etaMinutes(ids.length)}.`,
         '',
         `/broadcast_status ${broadcast.id} for progress.`,
       ].join('\n'),
@@ -340,7 +353,7 @@ export function registerBroadcastFlow(bot: Bot): void {
       await ctx.reply(content.text!);
     }
     await ctx.reply(
-      `That's the preview above. Send to ${state.count} users at ${rateFor(content)}/sec?`,
+      `That's the preview above. Send to ${state.count} users at ${broadcastRate()}/sec (~${etaMinutes(state.count)})?`,
       { reply_markup: new InlineKeyboard().text('Send', 'bcast:send').text('Cancel', 'bcast:cancel') },
     );
   });

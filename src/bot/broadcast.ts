@@ -14,6 +14,7 @@ import {
 } from '../services/broadcasts.js';
 import { type Broadcast } from '../db/schema.js';
 import { safeCall, safeSendMessage, type SafeResult } from '../telegram/safe.js';
+import { RateLimiter, runPool } from '../util/rate-limiter.js';
 import { log } from '../util/logger.js';
 
 export { type BroadcastContent, type BroadcastProgress };
@@ -29,8 +30,6 @@ export { type BroadcastContent, type BroadcastProgress };
  * mark, not a probabilistic one. `startBroadcast` therefore returns immediately
  * and the loop runs detached, driven by broadcast_sends rather than memory.
  */
-
-const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 
 /** How often progress is logged and onProgress fires (every N processed). */
 const PROGRESS_EVERY = 500;
@@ -55,10 +54,17 @@ export function activeBroadcastId(): number | null {
   return activeRun;
 }
 
-/** Sends per second for this payload kind. */
-export function rateFor(content: BroadcastContent): number {
-  const perSecond = content.photoFileId ? config.broadcastPhotoPerSecond : config.broadcastPerSecond;
-  return Math.max(1, perSecond);
+/**
+ * The global ceiling, shared by the whole pool. Photos and text run at the same
+ * rate: the limiter governs combined output, so a payload-specific rate would
+ * only lower a run that is already well inside Telegram's limits.
+ */
+export function broadcastRate(): number {
+  return Math.max(1, config.broadcastPerSecond);
+}
+
+export function broadcastConcurrency(): number {
+  return Math.max(1, config.broadcastConcurrency);
 }
 
 /**
@@ -88,24 +94,35 @@ function deliver(api: Api, id: bigint, content: BroadcastContent): Promise<SafeR
 }
 
 /**
- * Deliver to one recipient, honouring 429 retry_after. A 429 is a "come back
- * later", never a permanent failure, so the same recipient is retried after the
- * requested pause instead of being written off.
+ * Deliver to one recipient, honouring 429 retry_after.
+ *
+ * The backoff is registered on the shared limiter, never slept locally: a 429
+ * means Telegram is rate-limiting the BOT, so pausing only the worker that saw
+ * it would leave the other workers hammering an endpoint that has already said
+ * stop — the one way a pool behaves worse than a sequential loop. Registering
+ * the pause and looping means the retry waits for free, inside `acquire`, and
+ * every other worker waits with it.
  */
 async function deliverWithBackoff(
   api: Api,
   id: bigint,
   content: BroadcastContent,
+  limiter: RateLimiter,
 ): Promise<SafeResult<unknown>> {
-  let result = await deliver(api, id, content);
-  for (let attempt = 1; attempt <= MAX_RATE_LIMIT_RETRIES; attempt++) {
+  for (let attempt = 0; ; attempt++) {
+    await limiter.acquire();
+    const result = await deliver(api, id, content);
     if (result.ok || result.code !== 429) return result;
+    if (attempt >= MAX_RATE_LIMIT_RETRIES) return result;
+
     const wait = result.retryAfter ?? DEFAULT_RETRY_AFTER_SECONDS;
-    log.warn('broadcast rate limited', { telegramUserId: id.toString(), retryAfter: wait, attempt });
-    await sleep(wait * 1000);
-    result = await deliver(api, id, content);
+    limiter.pauseFor(wait);
+    log.warn('broadcast rate limited — pausing every worker', {
+      telegramUserId: id.toString(),
+      retryAfter: wait,
+      attempt: attempt + 1,
+    });
   }
-  return result;
 }
 
 /**
@@ -132,8 +149,11 @@ export async function runBroadcast(
   activeRun = broadcast.id;
 
   const content = contentOf(broadcast);
-  const perSecond = rateFor(content);
-  const delayMs = Math.max(0, Math.floor(1000 / perSecond));
+  const perSecond = broadcastRate();
+  const concurrency = broadcastConcurrency();
+  // One limiter for the whole run: it paces the pool as a unit and carries the
+  // global 429 backoff that every worker observes.
+  const limiter = new RateLimiter(perSecond);
   let processed = 0;
 
   try {
@@ -144,9 +164,11 @@ export async function runBroadcast(
       audience: broadcast.audience,
       kind: broadcast.kind,
       perSecond,
+      concurrency,
       total: start.total,
       alreadySent: start.sent,
       pending: start.pending,
+      etaSeconds: Math.round(start.pending / perSecond),
     });
 
     // Every recipient this run has already delivered to. A row only leaves
@@ -172,47 +194,64 @@ export async function runBroadcast(
         return progressOf(broadcast.id);
       }
 
-      for (const id of batch) {
-        attempted.add(id.toString());
-        const result = await deliverWithBackoff(api, id, content);
+      // The batch is worked by a bounded pool rather than one at a time. The
+      // sequential loop cost delayMs PLUS the Telegram round trip per
+      // recipient, so real throughput was 1/(delay + latency) — about 5.4/sec
+      // against a configured 25, a ceiling the structure could not reach.
+      // Concurrency hides the latency; the limiter still caps combined output.
+      await runPool(
+        batch,
+        concurrency,
+        async (id) => {
+          attempted.add(id.toString());
+          const result = await deliverWithBackoff(api, id, content, limiter);
 
-        try {
-          if (result.ok) {
-            await markSent(broadcast.id, id);
-          } else {
-            await markFailed(broadcast.id, id, result.code ?? null, result.error);
-            if (isPermanentlyUnreachable(result)) await markBlocked(id);
-          }
-        } catch (err) {
-          // Bookkeeping failed, not the send. Log and move on — a stuck row is
-          // re-read on the next resume, which is the safe direction to fail.
-          log.error('broadcast bookkeeping failed', {
-            broadcastId: broadcast.id,
-            telegramUserId: id.toString(),
-            error: err,
-          });
-        }
-
-        processed++;
-        if (processed % PROGRESS_EVERY === 0) {
-          const p = await progressOf(broadcast.id);
-          log.info('broadcast progress', {
-            broadcastId: broadcast.id,
-            processed,
-            sent: p.sent,
-            failed: p.failed,
-            pending: p.pending,
-            total: p.total,
-          });
-          // A throwing callback must not abort the run.
           try {
-            onProgress?.(p);
+            if (result.ok) {
+              await markSent(broadcast.id, id);
+            } else {
+              await markFailed(broadcast.id, id, result.code ?? null, result.error);
+              if (isPermanentlyUnreachable(result)) await markBlocked(id);
+            }
           } catch (err) {
-            log.warn('broadcast progress callback failed', { broadcastId: broadcast.id, error: err });
+            // Bookkeeping failed, not the send. Log and move on — a stuck row is
+            // re-read on the next resume, which is the safe direction to fail.
+            log.error('broadcast bookkeeping failed', {
+              broadcastId: broadcast.id,
+              telegramUserId: id.toString(),
+              error: err,
+            });
           }
-        }
-        if (delayMs) await sleep(delayMs);
-      }
+
+          processed++;
+          if (processed % PROGRESS_EVERY === 0) {
+            const p = await progressOf(broadcast.id);
+            log.info('broadcast progress', {
+              broadcastId: broadcast.id,
+              processed,
+              sent: p.sent,
+              failed: p.failed,
+              pending: p.pending,
+              total: p.total,
+              pausedMs: limiter.pausedForMs(),
+            });
+            // A throwing callback must not abort the run.
+            try {
+              onProgress?.(p);
+            } catch (err) {
+              log.warn('broadcast progress callback failed', { broadcastId: broadcast.id, error: err });
+            }
+          }
+        },
+        // runPool already isolates a throwing worker; this records it. Nothing
+        // above should throw, so reaching here is a bug worth seeing.
+        (err, id) =>
+          log.error('broadcast worker threw', {
+            broadcastId: broadcast.id,
+            telegramUserId: String(id),
+            error: err,
+          }),
+      );
     }
 
     const final = await progressOf(broadcast.id);
