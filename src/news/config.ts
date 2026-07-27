@@ -25,6 +25,7 @@ export const newsConfig = {
   topicId: optional('NEWS_TOPIC_ID', ''),
   provider: optional('NEWS_PROVIDER', 'mock'),
   teApiKey: optional('TE_API_KEY', TE_GUEST_KEY),
+  rapidApiKey: optional('RAPIDAPI_KEY', ''),
   /** 'HH:MM' in DESK_TZ. Both must be set for quiet hours to apply. */
   quietStart: optional('NEWS_QUIET_START', ''),
   quietEnd: optional('NEWS_QUIET_END', ''),
@@ -36,8 +37,20 @@ export const newsConfig = {
   importIntervalMinutes: intOf('NEWS_IMPORT_INTERVAL_MINUTES', 360),
   /** Seconds between result polls while any event is inside its window. */
   pollIntervalSeconds: intOf('NEWS_POLL_INTERVAL_SECONDS', 60),
-  /** Minutes after release during which an event is still polled for its actual. */
-  pollWindowMinutes: intOf('NEWS_POLL_WINDOW_MINUTES', 5),
+  /**
+   * Minutes after release during which an event is still polled for its actual.
+   *
+   * Default 15, not 5: the upstream calendar is scraped every ~5 minutes, so a
+   * print can legitimately land several minutes after the release timestamp. A
+   * 5-minute window closes before the number arrives and silently misses it.
+   */
+  pollWindowMinutes: intOf('NEWS_POLL_WINDOW_MINUTES', 15),
+
+  /**
+   * Hard ceiling on provider requests per UTC calendar month. Billing safety,
+   * not telemetry: at the cap every provider call stops outright.
+   */
+  monthlyRequestCap: intOf('NEWS_MONTHLY_REQUEST_CAP', 900),
 } as const;
 
 /**
@@ -48,7 +61,26 @@ export const cadence = {
   importIntervalMinutes: Math.min(Math.max(newsConfig.importIntervalMinutes, 1), 1440),
   pollIntervalSeconds: Math.min(Math.max(newsConfig.pollIntervalSeconds, 5), 3600),
   pollWindowMinutes: Math.min(Math.max(newsConfig.pollWindowMinutes, 1), 120),
+  monthlyRequestCap: Math.max(newsConfig.monthlyRequestCap, 0),
 } as const;
+
+/**
+ * Per-provider minimum polling interval, in seconds.
+ *
+ * RapidAPI's upstream is re-scraped every ~5 minutes, so polling faster than
+ * that returns identical data and bills for the privilege. The floor is
+ * enforced here rather than left to the operator, because the failure mode is
+ * financial and silent.
+ */
+const PROVIDER_POLL_FLOOR_SECONDS: Record<string, number> = {
+  rapidapi: 300,
+};
+
+/** The poll interval actually used, after applying the active provider's floor. */
+export function effectivePollIntervalSeconds(providerName: string): number {
+  const floor = PROVIDER_POLL_FLOOR_SECONDS[providerName] ?? 0;
+  return Math.max(cadence.pollIntervalSeconds, floor);
+}
 
 function parseId(raw: string): number | null {
   if (!raw) return null;
@@ -61,9 +93,34 @@ export function newsChatId(): number | null {
   return parseId(newsConfig.chatId);
 }
 
-/** Numeric topic id, or undefined when unset (message goes to the main thread). */
+/**
+ * Numeric topic id, or undefined for the General topic.
+ *
+ * Thread id 1 IS General in a Telegram forum, but passing message_thread_id: 1
+ * explicitly is unreliable — the way to target General is to omit the field
+ * altogether. Both "unset" and "1" therefore collapse to undefined here, and
+ * the send layer omits the key entirely rather than sending an undefined.
+ */
 export function newsTopicId(): number | undefined {
-  return parseId(newsConfig.topicId) ?? undefined;
+  const id = parseId(newsConfig.topicId);
+  if (id === null || id === 1) return undefined;
+  return id;
+}
+
+/**
+ * Admin ids for out-of-band alerts (currently the quota cap notice).
+ *
+ * Read straight from ADMIN_USER_IDS rather than importing config/index.ts:
+ * same source of truth, but without dragging the billing system's fail-fast
+ * validation into a module that must stay optional.
+ */
+export function newsAdminIds(): number[] {
+  return optional('ADMIN_USER_IDS', '')
+    .split(/[\s,]+/)
+    .map((s) => s.trim())
+    .filter(Boolean)
+    .map((s) => Number.parseInt(s, 10))
+    .filter((n) => Number.isFinite(n));
 }
 
 /**

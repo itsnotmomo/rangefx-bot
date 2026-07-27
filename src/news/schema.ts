@@ -82,6 +82,8 @@ export const newsSettings = pgTable('news_settings', {
   paused: boolean('paused').notNull().default(false),
   /** Stamped on every successful import — a stale value means the job is failing. */
   lastImportAt: timestamp('last_import_at', { withTimezone: true }),
+  /** 'YYYY-MM' (UTC) in which the quota-cap DM was already sent. Self-resetting. */
+  capNotifiedMonth: text('cap_notified_month'),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 });
 

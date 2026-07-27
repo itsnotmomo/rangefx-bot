@@ -2,6 +2,7 @@ import { log } from '../../util/logger.js';
 import { newsConfig } from '../config.js';
 import { type CalendarProvider } from '../types.js';
 import { mockProvider } from './mock.js';
+import { RapidApiProvider } from './rapidapi.js';
 import { TradingEconomicsProvider } from './trading-economics.js';
 
 /**
@@ -24,6 +25,9 @@ function build(name: string): CalendarProvider | null {
     case 'tradingeconomics':
     case 'te':
       return new TradingEconomicsProvider();
+    case 'rapidapi':
+    case 'rapid_api':
+      return new RapidApiProvider();
     default:
       return null;
   }
@@ -51,4 +55,5 @@ export function activeProvider(): CalendarProvider {
 }
 
 export { mockProvider } from './mock.js';
+export { RapidApiProvider } from './rapidapi.js';
 export { TradingEconomicsProvider } from './trading-economics.js';

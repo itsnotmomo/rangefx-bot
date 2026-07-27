@@ -1,9 +1,12 @@
 import cron from 'node-cron';
 import { type Api } from 'grammy';
 import { log } from '../util/logger.js';
-import { cadence, newsConfig, newsConfigured } from './config.js';
+import { cadence, effectivePollIntervalSeconds, newsConfig, newsConfigured } from './config.js';
 import { renderRelease, renderReminder, renderResult } from './format.js';
 import { activeProvider, mockProvider, providerFor } from './providers/index.js';
+import { enforceQuota } from './quota.js';
+import { type EconomicEvent, type NewsSettings } from './schema.js';
+import { type RawResult } from './types.js';
 import {
   applyResult,
   claimDelivery,
@@ -64,11 +67,15 @@ async function guarded(key: keyof typeof running, label: string, fn: () => Promi
  * Runs regardless of the paused flag: pausing means "stop talking", not "go
  * stale". When the desk resumes, the calendar is already current.
  */
-export async function runImport(): Promise<void> {
+export async function runImport(api: Api): Promise<void> {
   if (!newsConfigured()) return;
 
   const settings = await getSettings();
   const provider = activeProvider();
+  // Cap check before spending. Blocked means the calendar goes stale rather
+  // than the bill going up — the deliberate trade.
+  if (!(await enforceQuota(api, provider.name))) return;
+
   const from = new Date();
   const to = new Date(from.getTime() + IMPORT_HORIZON_HOURS * 3_600_000);
 
@@ -163,58 +170,84 @@ export async function runResultPoll(api: Api): Promise<void> {
   const pending = await pendingResults(new Date(), cadence.pollWindowMinutes);
   if (pending.length === 0) return;
 
+  // Group by the EVENT's provider, not the active one, so a mock test event
+  // still resolves while the live importer runs against a real vendor.
+  const byProvider = new Map<string, EconomicEvent[]>();
   for (const event of pending) {
-    // Resolve by the EVENT's provider, not the active one, so a mock test event
-    // still resolves while the live importer runs against a real vendor.
-    const provider = providerFor(event.provider);
-    if (!provider) {
-      log.warn('no provider registered for stored event', { eventId: event.id, provider: event.provider });
-      continue;
-    }
-
-    const result = await provider.fetchResult(event.providerEventId);
-    if (!result || result.actual === null) continue;
-
-    if (!(await claimDelivery(event.id, 'result'))) continue;
-
-    const merged = {
-      ...event,
-      actual: result.actual,
-      forecast: result.forecast ?? event.forecast,
-      previous: result.previous ?? event.previous,
-      revised: result.revised ?? event.revised,
-    };
-    const text = renderResult(merged);
-
-    // Edit the release message in place — two messages per event, not three.
-    const messageId = await releaseMessageId(event.id);
-    let delivered = false;
-
-    if (messageId !== null) {
-      delivered = await editNews(api, messageId, text);
-      if (delivered) await setDeliveryMessageId(event.id, 'result', messageId);
-    } else {
-      // The release row exists but carries no id (its send failed mid-flight).
-      // Posting fresh is better than losing the print entirely.
-      const posted = await sendNews(api, text, shouldSilence(settings));
-      delivered = posted !== null;
-      if (posted !== null) await setDeliveryMessageId(event.id, 'result', posted);
-    }
-
-    if (!delivered) {
-      // Leave `actual` unset too, so the next tick retries cleanly.
-      await dropDelivery(event.id, 'result');
-      continue;
-    }
-
-    await applyResult(event.id, result);
-    log.info('news result delivered', {
-      eventId: event.id,
-      title: event.title,
-      actual: result.actual,
-      editedMessageId: messageId,
-    });
+    const bucket = byProvider.get(event.provider);
+    if (bucket) bucket.push(event);
+    else byProvider.set(event.provider, [event]);
   }
+
+  for (const [providerName, events] of byProvider) {
+    const provider = providerFor(providerName);
+    if (!provider) {
+      log.warn('no provider registered for stored events', { provider: providerName, events: events.length });
+      continue;
+    }
+
+    // Cap check before spending, and the one place the admin gets told.
+    if (!(await enforceQuota(api, provider.name))) continue;
+
+    // ONE batched call for every pending event, matched back by id below.
+    const results = await provider.fetchResults(events.map((e) => ({ providerEventId: e.providerEventId })));
+    if (results.length === 0) continue;
+    const byId = new Map(results.map((r) => [r.providerEventId, r]));
+
+    for (const event of events) {
+      const result = byId.get(event.providerEventId);
+      if (!result || result.actual === null) continue;
+      await deliverResult(api, event, result, settings);
+    }
+  }
+}
+
+/** Publish one print by editing its release message in place. */
+async function deliverResult(
+  api: Api,
+  event: EconomicEvent,
+  result: RawResult,
+  settings: NewsSettings,
+): Promise<void> {
+  if (!(await claimDelivery(event.id, 'result'))) return;
+
+  const merged = {
+    ...event,
+    actual: result.actual,
+    forecast: result.forecast ?? event.forecast,
+    previous: result.previous ?? event.previous,
+    revised: result.revised ?? event.revised,
+  };
+  const text = renderResult(merged);
+
+  // Edit the release message in place — two messages per event, not three.
+  const messageId = await releaseMessageId(event.id);
+  let delivered = false;
+
+  if (messageId !== null) {
+    delivered = await editNews(api, messageId, text);
+    if (delivered) await setDeliveryMessageId(event.id, 'result', messageId);
+  } else {
+    // The release row exists but carries no id (its send failed mid-flight).
+    // Posting fresh is better than losing the print entirely.
+    const posted = await sendNews(api, text, shouldSilence(settings));
+    delivered = posted !== null;
+    if (posted !== null) await setDeliveryMessageId(event.id, 'result', posted);
+  }
+
+  if (!delivered) {
+    // Leave `actual` unset too, so the next tick retries cleanly.
+    await dropDelivery(event.id, 'result');
+    return;
+  }
+
+  await applyResult(event.id, result);
+  log.info('news result delivered', {
+    eventId: event.id,
+    title: event.title,
+    actual: result.actual,
+    editedMessageId: messageId,
+  });
 }
 
 // ---------------------------------------------------------------------------
@@ -249,19 +282,25 @@ function schedule(expr: string, label: string, fn: () => void): void {
  */
 export function scheduleNewsJobs(api: Api): void {
   const importExpr = minutesCron(cadence.importIntervalMinutes);
-  const pollExpr = secondsCron(cadence.pollIntervalSeconds);
+  // The active provider may raise the poll floor — RapidAPI's upstream only
+  // refreshes every ~5 minutes, so faster polling bills for identical data.
+  const pollSeconds = effectivePollIntervalSeconds(activeProvider().name);
+  const pollExpr = secondsCron(pollSeconds);
 
-  schedule(importExpr, 'news.import', () => void guarded('import', 'news.import', () => runImport()));
+  schedule(importExpr, 'news.import', () => void guarded('import', 'news.import', () => runImport(api)));
   schedule('* * * * *', 'news.reminder', () => void guarded('reminder', 'news.reminder', () => runReminders(api)));
   schedule('* * * * *', 'news.release', () => void guarded('release', 'news.release', () => runReleases(api)));
   schedule(pollExpr, 'news.result', () => void guarded('result', 'news.result', () => runResultPoll(api)));
 
   log.info('news jobs scheduled', {
     configured: newsConfigured(),
-    provider: newsConfig.provider,
+    provider: activeProvider().name,
     importCron: importExpr,
     pollCron: pollExpr,
+    pollIntervalSeconds: pollSeconds,
+    pollFloorApplied: pollSeconds !== cadence.pollIntervalSeconds,
     pollWindowMinutes: cadence.pollWindowMinutes,
+    monthlyRequestCap: cadence.monthlyRequestCap,
   });
 
   if (!newsConfigured()) {
@@ -270,5 +309,5 @@ export function scheduleNewsJobs(api: Api): void {
   }
 
   // First import on boot so a fresh deploy is not blind until the next tick.
-  void guarded('import', 'news.import', () => runImport());
+  void guarded('import', 'news.import', () => runImport(api));
 }

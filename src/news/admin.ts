@@ -1,10 +1,19 @@
 import { type Bot, type Context } from 'grammy';
 import { isAdmin } from '../config/index.js';
 import { log } from '../util/logger.js';
-import { cadence, DESK_TZ, newsChatId, newsConfig, newsConfigured, newsTopicId } from './config.js';
+import {
+  cadence,
+  DESK_TZ,
+  effectivePollIntervalSeconds,
+  newsChatId,
+  newsConfig,
+  newsConfigured,
+  newsTopicId,
+} from './config.js';
 import { bothTimes } from './format.js';
 import { activeProvider, mockProvider } from './providers/index.js';
 import { providerUsage, setPaused, statusSnapshot, upsertOneEvent } from './repo.js';
+import { quotaState } from './quota.js';
 import { runImport } from './jobs.js';
 
 /**
@@ -47,7 +56,11 @@ export function registerNewsCommands(bot: Bot): void {
     if (!requireAdmin(ctx)) return next();
 
     const provider = activeProvider();
-    const [snapshot, usage] = await Promise.all([statusSnapshot(), providerUsage(provider.name)]);
+    const [snapshot, usage, quota] = await Promise.all([
+      statusSnapshot(),
+      providerUsage(provider.name),
+      quotaState(provider.name),
+    ]);
 
     const lines = [
       'Range Compound — news module',
@@ -62,7 +75,11 @@ export function registerNewsCommands(bot: Bot): void {
       `  import:     every ${cadence.importIntervalMinutes}m`,
       `  reminder:   every 1m (T-5 window)`,
       `  release:    every 1m`,
-      `  result:     every ${cadence.pollIntervalSeconds}s, ${cadence.pollWindowMinutes}m after release`,
+      `  result:     every ${effectivePollIntervalSeconds(provider.name)}s, ${cadence.pollWindowMinutes}m after release${
+        effectivePollIntervalSeconds(provider.name) !== cadence.pollIntervalSeconds
+          ? ` (floored from ${cadence.pollIntervalSeconds}s for ${provider.name})`
+          : ''
+      }`,
       '',
       'Import',
       `  last run:   ${ago(snapshot.lastImportAt)}${snapshot.lastImportAt ? ` (${fullTime(snapshot.lastImportAt)})` : ''}`,
@@ -72,7 +89,8 @@ export function registerNewsCommands(bot: Bot): void {
       `Provider requests (${provider.name})`,
       `  last 24h:      ${usage.last24h}`,
       `  rolling 30d:   ${usage.rolling30d}`,
-      `  month to date: ${usage.monthToDate}`,
+      `  month to date: ${usage.monthToDate}${quota.cap > 0 ? ` / ${quota.cap} cap` : ' (no cap set)'}`,
+      `  remaining:     ${quota.cap > 0 ? `${quota.remaining}${quota.exceeded ? '  ← CAP REACHED, calls blocked' : ''}` : 'unlimited'}`,
       `  failed (30d):  ${usage.failures30d}`,
     ];
 
@@ -171,7 +189,7 @@ export function registerNewsCommands(bot: Bot): void {
     }
     await ctx.reply('Importing…');
     try {
-      await runImport();
+      await runImport(ctx.api);
       const snapshot = await statusSnapshot();
       await ctx.reply(`Import complete. ${snapshot.totalEvents} events stored · ${snapshot.upcomingCount} upcoming.`);
     } catch (err) {

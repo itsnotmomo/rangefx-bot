@@ -35,8 +35,32 @@ export interface RawResult {
   revised: string | null;
 }
 
+/** Minimal shape the batch poller passes down — just the key to match on. */
+export interface ResultQuery {
+  providerEventId: string;
+}
+
 export interface CalendarProvider {
   name: string;
   fetchUpcoming(from: Date, to: Date): Promise<RawEvent[]>;
+
+  /**
+   * Fetch results for MANY events at once. This is what the result poller uses,
+   * exclusively — one call per tick covering every pending event, matched back
+   * by providerEventId.
+   *
+   * Adapters over a range-query API (RapidAPI) must satisfy this with a single
+   * HTTP request; the whole point is that N pending events cost one request,
+   * not N. Adapters over a per-id API may loop internally.
+   *
+   * The returned array may be shorter than the input — events that have not
+   * printed yet are simply absent, not null entries.
+   */
+  fetchResults(events: ResultQuery[]): Promise<RawResult[]>;
+
+  /**
+   * Single-event convenience, kept for ad-hoc lookups. NOT used by the poller.
+   * Where the batch call is the primitive, this delegates to it.
+   */
   fetchResult(providerEventId: string): Promise<RawResult | null>;
 }

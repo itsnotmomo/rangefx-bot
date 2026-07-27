@@ -1,8 +1,10 @@
 import { log } from '../../util/logger.js';
 import { newsConfig, TE_GUEST_KEY } from '../config.js';
+import { quotaAvailable } from '../quota.js';
 import { recordProviderRequest } from '../repo.js';
 import { type Impact, type ProviderEndpoint } from '../schema.js';
-import { type CalendarProvider, type RawEvent, type RawResult } from '../types.js';
+import { parseUtcInstant } from '../time.js';
+import { type CalendarProvider, type RawEvent, type RawResult, type ResultQuery } from '../types.js';
 
 /**
  * Trading Economics calendar adapter.
@@ -26,6 +28,8 @@ import { type CalendarProvider, type RawEvent, type RawResult } from '../types.j
 
 const BASE_URL = 'https://api.tradingeconomics.com/calendar';
 const REQUEST_TIMEOUT_MS = 15_000;
+/** Ceiling on the per-id result loop, so one tick can never become a burst. */
+const MAX_RESULT_LOOKUPS_PER_TICK = 10;
 
 /** Shape of a Trading Economics calendar row (only the fields we consume). */
 interface TeRow {
@@ -53,30 +57,10 @@ interface TeRow {
  * on anything else rather than guessing.
  */
 export function parseTradingEconomicsUtc(raw: string | undefined): Date | null {
-  if (!raw) return null;
-  const s = raw.trim();
-  if (!s) return null;
-
-  // Already explicit about its zone — trust it.
-  if (/(Z|[+-]\d{2}:?\d{2})$/i.test(s)) {
-    const d = new Date(s);
-    return Number.isNaN(d.getTime()) ? null : d;
-  }
-
-  const m = /^(\d{4})-(\d{2})-(\d{2})(?:[T ](\d{2}):(\d{2})(?::(\d{2}))?)?/.exec(s);
-  if (!m) return null;
-
-  const d = new Date(
-    Date.UTC(
-      Number(m[1]!),
-      Number(m[2]!) - 1,
-      Number(m[3]!),
-      Number(m[4] ?? '0'),
-      Number(m[5] ?? '0'),
-      Number(m[6] ?? '0'),
-    ),
-  );
-  return Number.isNaN(d.getTime()) ? null : d;
+  // TE documents these as UTC and sends them without an offset, so an absent
+  // zone is expected here and needs no warning — unlike RapidAPI, which
+  // documents an explicit Z.
+  return parseUtcInstant(raw)?.at ?? null;
 }
 
 /** Importance 3 -> high, 2 -> medium, anything else -> low. */
@@ -175,6 +159,10 @@ export class TradingEconomicsProvider implements CalendarProvider {
    * limit turns into mysteriously empty imports.
    */
   private async request(url: string, endpoint: ProviderEndpoint): Promise<unknown[] | null> {
+    // Hard billing gate, checked immediately before spending. A blocked call is
+    // not a request and is deliberately NOT written to the ledger.
+    if (!(await quotaAvailable(this.name))) return null;
+
     let ok = false;
     try {
       const res = await fetch(url, {
@@ -261,7 +249,36 @@ export class TradingEconomicsProvider implements CalendarProvider {
     return mapped;
   }
 
+  /**
+   * Batch results.
+   *
+   * TE's calendar-id endpoint is per-id, so this loops — acceptable here
+   * because TE is not the provider we poll aggressively, and every iteration
+   * still passes the quota gate, which bounds the spend. The loop is capped so
+   * an unexpectedly large pending set cannot turn one tick into a burst.
+   */
+  async fetchResults(events: ResultQuery[]): Promise<RawResult[]> {
+    const out: RawResult[] = [];
+    const capped = events.slice(0, MAX_RESULT_LOOKUPS_PER_TICK);
+    if (events.length > capped.length) {
+      log.warn('trading economics result lookups truncated for this tick', {
+        provider: this.name,
+        pending: events.length,
+        looked_up: capped.length,
+      });
+    }
+    for (const { providerEventId } of capped) {
+      const one = await this.fetchOne(providerEventId);
+      if (one) out.push(one);
+    }
+    return out;
+  }
+
   async fetchResult(providerEventId: string): Promise<RawResult | null> {
+    return this.fetchOne(providerEventId);
+  }
+
+  private async fetchOne(providerEventId: string): Promise<RawResult | null> {
     const url = `${BASE_URL}/calendarid/${encodeURIComponent(providerEventId)}?c=${encodeURIComponent(this.apiKey)}&f=json`;
     const rows = await this.request(url, 'result');
     if (rows === null || rows.length === 0) return null;

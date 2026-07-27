@@ -67,17 +67,22 @@ export async function sendNews(api: Api, text: string, silent: boolean): Promise
   const chatId = newsChatId();
   if (chatId === null) return null;
 
+  const topicId = newsTopicId();
   const res = await withRateLimitRetry('news.sendMessage', () =>
     api.sendMessage(chatId, text, {
       parse_mode: 'HTML',
-      message_thread_id: newsTopicId(),
+      // The key is OMITTED, not sent as undefined, when targeting General.
+      // Passing message_thread_id: 1 (or an explicit undefined) is the
+      // unreliable way to hit a forum's General topic; leaving the field out
+      // entirely is the way that works.
+      ...(topicId !== undefined ? { message_thread_id: topicId } : {}),
       disable_notification: silent,
       link_preview_options: { is_disabled: true },
     }),
   );
 
   if (!res.ok) {
-    log.error('news send failed', { error: res.error, chatId, topicId: newsTopicId() });
+    log.error('news send failed', { error: res.error, chatId, topicId: topicId ?? 'general' });
     return null;
   }
   return res.value.message_id;

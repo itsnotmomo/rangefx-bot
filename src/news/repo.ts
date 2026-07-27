@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, gte, isNull, lt, lte, notExists, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gt, gte, isNull, lt, lte, ne, notExists, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
   economicEvents,
@@ -13,6 +13,7 @@ import {
   IMPACT_RANK,
 } from './schema.js';
 import { type RawEvent, type RawResult } from './types.js';
+import { utcMonthStart } from './time.js';
 
 /**
  * Every database access the news module makes. Kept in one file so the jobs
@@ -294,11 +295,15 @@ export interface ProviderUsage {
 }
 
 export async function providerUsage(provider: string): Promise<ProviderUsage> {
+  // The month boundary is computed in JS and passed in, NOT via Postgres
+  // date_trunc('month', now()) — that follows the database session's TimeZone,
+  // which would reset the billing cap on a different day than the code thinks.
+  const monthStart = utcMonthStart();
   const [row] = await db
     .select({
       last24h: sql<number>`count(*) filter (where ${newsProviderRequests.createdAt} >= now() - interval '24 hours')`,
       rolling30d: sql<number>`count(*) filter (where ${newsProviderRequests.createdAt} >= now() - interval '30 days')`,
-      monthToDate: sql<number>`count(*) filter (where ${newsProviderRequests.createdAt} >= date_trunc('month', now()))`,
+      monthToDate: sql<number>`count(*) filter (where ${newsProviderRequests.createdAt} >= ${monthStart})`,
       failures30d: sql<number>`count(*) filter (where ${newsProviderRequests.createdAt} >= now() - interval '30 days' and not ${newsProviderRequests.ok})`,
     })
     .from(newsProviderRequests)
@@ -310,6 +315,36 @@ export async function providerUsage(provider: string): Promise<ProviderUsage> {
     monthToDate: Number(row?.monthToDate ?? 0),
     failures30d: Number(row?.failures30d ?? 0),
   };
+}
+
+/** Requests made by `provider` since `since`. The number the hard cap is checked against. */
+export async function monthToDateRequests(provider: string, since: Date): Promise<number> {
+  const [row] = await db
+    .select({ n: count() })
+    .from(newsProviderRequests)
+    .where(and(eq(newsProviderRequests.provider, provider), gte(newsProviderRequests.createdAt, since)));
+  return row?.n ?? 0;
+}
+
+/**
+ * Claim the right to send this month's cap notice.
+ *
+ * A conditional UPDATE, so exactly one caller wins per month key no matter how
+ * many ticks hit the ceiling simultaneously — and the claim expires by itself
+ * when the month rolls over.
+ */
+export async function claimCapNotice(monthKey: string): Promise<boolean> {
+  const rows = await db
+    .update(newsSettings)
+    .set({ capNotifiedMonth: monthKey, updatedAt: new Date() })
+    .where(
+      and(
+        eq(newsSettings.id, SETTINGS_ID),
+        or(isNull(newsSettings.capNotifiedMonth), ne(newsSettings.capNotifiedMonth, monthKey)),
+      ),
+    )
+    .returning({ id: newsSettings.id });
+  return rows.length > 0;
 }
 
 /** Opportunistic retention trim, called from the (infrequent) import job. */

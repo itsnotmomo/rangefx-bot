@@ -1,5 +1,5 @@
 import { log } from '../../util/logger.js';
-import { type CalendarProvider, type RawEvent, type RawResult } from '../types.js';
+import { type CalendarProvider, type RawEvent, type RawResult, type ResultQuery } from '../types.js';
 
 /**
  * Synthetic calendar provider.
@@ -76,12 +76,22 @@ export class MockProvider implements CalendarProvider {
     return out;
   }
 
+  /** Batch lookup. Events that have not "printed" yet are simply absent. */
+  async fetchResults(events: ResultQuery[]): Promise<RawResult[]> {
+    const out: RawResult[] = [];
+    for (const { providerEventId } of events) {
+      const entry = this.events.get(providerEventId);
+      if (!entry) continue;
+      // Nothing prints before the release — the poll must see a real "not yet".
+      if (Date.now() < entry.event.releaseAt.getTime() + RESULT_DELAY_MS) continue;
+      out.push({ providerEventId, ...entry.result });
+    }
+    return out;
+  }
+
   async fetchResult(providerEventId: string): Promise<RawResult | null> {
-    const entry = this.events.get(providerEventId);
-    if (!entry) return null;
-    // Nothing prints before the release — the poll must see a real "not yet".
-    if (Date.now() < entry.event.releaseAt.getTime() + RESULT_DELAY_MS) return null;
-    return { providerEventId, ...entry.result };
+    const [only] = await this.fetchResults([{ providerEventId }]);
+    return only ?? null;
   }
 
   /** Drop synthetic events whose window has long passed. */
