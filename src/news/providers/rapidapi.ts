@@ -45,7 +45,9 @@ const MAX_LIMIT = 500;
 const SEND_COUNTRY_CODE = false;
 
 interface RapidRow {
+  /** Row-level UUID. Kept verbatim; not used as the key. */
   id?: string | number;
+  /** Event UUID — may identify a recurring SERIES rather than one occurrence. */
   eventId?: string | number;
   name?: string;
   countryCode?: string;
@@ -59,6 +61,33 @@ interface RapidRow {
   unit?: string;
   /** Ignored on purpose — we compute deviation ourselves, mechanically. */
   isBetterThanExpected?: boolean;
+  // Captured as informational only; never rendered.
+  potency?: string | number | null;
+  ratioDeviation?: string | number | null;
+  periodDateUtc?: string | null;
+  periodType?: string | null;
+}
+
+/**
+ * Build the occurrence key: `eventId:YYYY-MM-DD` from the UTC date of dateUtc.
+ *
+ * It is not established whether RapidAPI's eventId is per-occurrence or
+ * per-series. If it is per-series, using it bare would make every recurring
+ * release — jobless claims, the PMIs — collide on the unique constraint, and
+ * each week would silently overwrite the last. Composing with the release date
+ * is correct under either interpretation.
+ *
+ * The DATE is used, not the full timestamp, so that a revision to the release
+ * time updates the existing row rather than spawning a duplicate. The residual
+ * edge is a revision that crosses UTC midnight, which would produce one extra
+ * row — strictly better than losing a week of history.
+ *
+ * This is also why the result matcher must recompose the key rather than
+ * comparing raw eventIds: the stored id and the response field are no longer
+ * the same string.
+ */
+export function occurrenceKey(eventId: string, releaseAt: Date): string {
+  return `${eventId}:${releaseAt.toISOString().slice(0, 10)}`;
 }
 
 /** volatility HIGH -> high, MEDIUM -> medium, everything else -> low. */
@@ -171,13 +200,21 @@ export class RapidApiProvider implements CalendarProvider {
     return `${BASE_URL}?${params.toString()}`;
   }
 
+  /** The stored occurrence key for a row, or null if it cannot be formed. */
+  private keyFor(row: RapidRow): string | null {
+    const seriesId = row.eventId === undefined || row.eventId === null ? '' : String(row.eventId).trim();
+    const parsed = parseUtcInstant(row.dateUtc);
+    if (!seriesId || !parsed) return null;
+    return occurrenceKey(seriesId, parsed.at);
+  }
+
   private toRawEvent(row: RapidRow): RawEvent | null {
-    const id = row.eventId === undefined || row.eventId === null ? '' : String(row.eventId).trim();
+    const seriesId = row.eventId === undefined || row.eventId === null ? '' : String(row.eventId).trim();
     const title = (row.name ?? '').trim();
     const currency = (row.currencyCode ?? '').trim().toUpperCase();
     const parsed = parseUtcInstant(row.dateUtc);
 
-    if (!id || !title || !currency || !parsed) return null;
+    if (!seriesId || !title || !currency || !parsed) return null;
 
     if (!parsed.explicitZone && !this.warnedMissingZone) {
       this.warnedMissingZone = true;
@@ -193,7 +230,8 @@ export class RapidApiProvider implements CalendarProvider {
     }
 
     return {
-      providerEventId: id,
+      // Composite, not the bare eventId — see occurrenceKey().
+      providerEventId: occurrenceKey(seriesId, parsed.at),
       currency,
       title,
       impact: mapVolatility(row.volatility),
@@ -202,6 +240,15 @@ export class RapidApiProvider implements CalendarProvider {
       forecast: reading(row.consensus),
       actual: reading(row.actual),
       revised: reading(row.revised),
+      // Informational only — captured for the record, never rendered.
+      meta: {
+        providerRowId: reading(row.id),
+        providerSeriesId: seriesId,
+        potency: reading(row.potency),
+        ratioDeviation: reading(row.ratioDeviation),
+        periodDateUtc: parseUtcInstant(row.periodDateUtc)?.at ?? null,
+        periodType: reading(row.periodType),
+      },
     };
   }
 
@@ -281,13 +328,15 @@ export class RapidApiProvider implements CalendarProvider {
 
     const out: RawResult[] = [];
     for (const row of rows) {
-      const id = row.eventId === undefined || row.eventId === null ? '' : String(row.eventId).trim();
-      if (!id || !wanted.has(id)) continue;
+      // Recompose the SAME composite key we stored. Comparing raw eventIds
+      // here would match nothing, and would do so silently.
+      const key = this.keyFor(row);
+      if (!key || !wanted.has(key)) continue;
       const actual = reading(row.actual);
       // No print yet — omit rather than returning a null-actual row.
       if (actual === null) continue;
       out.push({
-        providerEventId: id,
+        providerEventId: key,
         actual,
         forecast: reading(row.consensus),
         previous: reading(row.previous),

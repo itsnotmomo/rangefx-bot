@@ -6,9 +6,33 @@ import { type Impact } from './schema.js';
  * different vendor or a scraper tomorrow, without any job knowing.
  */
 
+/**
+ * Provider-supplied extras we keep for the record but never act on.
+ *
+ * Explicitly NOT used in rendering. `ratioDeviation` in particular is the
+ * vendor's own deviation metric — ours is computed from actual and forecast so
+ * the number in the topic is one we can explain.
+ */
+export interface RawEventMeta {
+  /** The provider's raw row id, kept verbatim. */
+  providerRowId?: string | null;
+  /** The provider's raw event/series id, kept verbatim. */
+  providerSeriesId?: string | null;
+  potency?: string | null;
+  ratioDeviation?: string | null;
+  periodDateUtc?: Date | null;
+  periodType?: string | null;
+}
+
 /** A calendar entry as the adapter has normalised it, ready to persist. */
 export interface RawEvent {
-  /** The provider's own identifier. Unique within that provider. */
+  /**
+   * The OCCURRENCE key, unique within that provider.
+   *
+   * Adapters must guarantee this identifies one release, not a recurring
+   * series — composing it from a series id plus the release date where the
+   * provider does not distinguish the two.
+   */
   providerEventId: string;
   /** ISO 4217 code: USD, EUR, JPY. */
   currency: string;
@@ -24,6 +48,8 @@ export interface RawEvent {
   /** Usually null at import; populated once the number prints. */
   actual: string | null;
   revised: string | null;
+  /** Kept for the record, never rendered. */
+  meta?: RawEventMeta;
 }
 
 /** The outcome of a single event, fetched after its release time. */

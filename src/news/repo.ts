@@ -99,6 +99,13 @@ export async function upsertEvents(provider: string, events: RawEvent[]): Promis
     forecast: e.forecast,
     actual: e.actual,
     revised: e.revised,
+    // Informational passthrough — recorded, never rendered.
+    providerRowId: e.meta?.providerRowId ?? null,
+    providerSeriesId: e.meta?.providerSeriesId ?? null,
+    potency: e.meta?.potency ?? null,
+    ratioDeviation: e.meta?.ratioDeviation ?? null,
+    periodDateUtc: e.meta?.periodDateUtc ?? null,
+    periodType: e.meta?.periodType ?? null,
   }));
 
   const written = await db
@@ -115,6 +122,14 @@ export async function upsertEvents(provider: string, events: RawEvent[]): Promis
         forecast: sql`excluded.forecast`,
         actual: sql`coalesce(excluded.actual, ${economicEvents.actual})`,
         revised: sql`coalesce(excluded.revised, ${economicEvents.revised})`,
+        // Same rule as the readings: a later import that omits a field must
+        // not erase what an earlier one captured.
+        providerRowId: sql`coalesce(excluded.provider_row_id, ${economicEvents.providerRowId})`,
+        providerSeriesId: sql`coalesce(excluded.provider_series_id, ${economicEvents.providerSeriesId})`,
+        potency: sql`coalesce(excluded.potency, ${economicEvents.potency})`,
+        ratioDeviation: sql`coalesce(excluded.ratio_deviation, ${economicEvents.ratioDeviation})`,
+        periodDateUtc: sql`coalesce(excluded.period_date_utc, ${economicEvents.periodDateUtc})`,
+        periodType: sql`coalesce(excluded.period_type, ${economicEvents.periodType})`,
         updatedAt: sql`now()`,
       },
     })

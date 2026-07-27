@@ -30,9 +30,15 @@ export const IMPACT_RANK: Record<Impact, number> = { low: 1, medium: 2, high: 3 
 
 export const economicEvents = pgTable('economic_events', {
   id: serial('id').primaryKey(),
-  /** Adapter that produced this row: 'mock' | 'trading_economics'. */
+  /** Adapter that produced this row: 'mock' | 'rapidapi' | 'trading_economics'. */
   provider: text('provider').notNull(),
-  /** The provider's own id (TE: CalendarId). Unique per provider. */
+  /**
+   * Our occurrence key, unique per provider.
+   *
+   * TE uses CalendarId directly. RapidAPI composes `eventId:YYYY-MM-DD` because
+   * its eventId may identify a recurring series rather than one occurrence —
+   * see migrations/0010.
+   */
   providerEventId: text('provider_event_id').notNull(),
   currency: text('currency').notNull(),
   title: text('title').notNull(),
@@ -45,11 +51,24 @@ export const economicEvents = pgTable('economic_events', {
   actual: text('actual'),
   revised: text('revised'),
   actualReceivedAt: timestamp('actual_received_at', { withTimezone: true }),
+
+  // --- Informational only. NOTHING below is read by the renderer; the
+  // deviation line stays ours to compute from actual and forecast.
+  /** RapidAPI `id`, verbatim. */
+  providerRowId: text('provider_row_id'),
+  /** RapidAPI `eventId`, verbatim — the possibly-per-series identifier. */
+  providerSeriesId: text('provider_series_id'),
+  potency: text('potency'),
+  ratioDeviation: text('ratio_deviation'),
+  periodDateUtc: timestamp('period_date_utc', { withTimezone: true }),
+  periodType: text('period_type'),
+
   createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
 }, (t) => ({
   providerEventUnique: uniqueIndex('economic_events_provider_event_unique').on(t.provider, t.providerEventId),
   releaseIdx: index('economic_events_release_idx').on(t.releaseAt),
+  seriesIdx: index('economic_events_series_idx').on(t.provider, t.providerSeriesId),
 }));
 
 /**
