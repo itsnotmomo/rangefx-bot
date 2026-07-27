@@ -1,5 +1,5 @@
 import { watchedInstrumentsSentence } from '../util/instruments.js';
-import { type EconomicEvent } from './schema.js';
+import { type EconomicEvent, timeIsUnscheduled } from './schema.js';
 
 /**
  * Message rendering.
@@ -169,7 +169,10 @@ function readingLines(pairs: Array<[string, string | null]>): string[] {
  *   8. the volatility line
  */
 export function renderReminder(event: EconomicEvent): string {
-  const lines = [heading(event), 'Releases in 5 minutes.', ''];
+  // A speech or press conference begins; it does not release.
+  const lines = [heading(event), event.isSpeech ? 'Begins in 5 minutes.' : 'Releases in 5 minutes.', ''];
+  // Speeches and statements carry no numbers. Omit the block entirely rather
+  // than printing empty labels.
   const readings = readingLines([
     ['Previous', event.previous],
     ['Forecast', event.forecast],
@@ -188,12 +191,21 @@ export function renderReminder(event: EconomicEvent): string {
  * timestamp.
  */
 export function renderRelease(event: EconomicEvent): string {
-  return [heading(event), 'Releasing now.'].join('\n');
+  return [heading(event), event.isSpeech ? 'Starting now.' : 'Releasing now.'].join('\n');
 }
 
-/** Result, rendered as an in-place edit of the release message. */
+/**
+ * Result. Normally an in-place edit of the release message.
+ *
+ * For an event whose time was only an estimate there is no release message to
+ * edit — nothing was posted, precisely because the time could not be trusted.
+ * That case is posted fresh and opens by saying so, so a number appearing
+ * without warning is explained rather than merely unexplained.
+ */
 export function renderResult(event: EconomicEvent): string {
-  const lines = [heading(event), ''];
+  const lines: string[] = [];
+  if (timeIsUnscheduled(event)) lines.push('Release time was not scheduled in advance.', '');
+  lines.push(heading(event), '');
   lines.push(
     ...readingLines([
       ['Actual', event.actual],

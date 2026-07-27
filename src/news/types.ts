@@ -48,6 +48,17 @@ export interface RawEvent {
   /** Usually null at import; populated once the number prints. */
   actual: string | null;
   revised: string | null;
+
+  // Classification. Optional because not every provider models these; an
+  // absent flag means "ordinary scheduled numeric event", the safe default.
+  /** Release time is an estimate, not a schedule. */
+  isTentative?: boolean;
+  /** Dated but not timed. */
+  isAllDay?: boolean;
+  /** Speech or press conference. */
+  isSpeech?: boolean;
+  /** Statement or written report. */
+  isReport?: boolean;
   /** Kept for the record, never rendered. */
   meta?: RawEventMeta;
 }

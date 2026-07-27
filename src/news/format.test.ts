@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 import { describe, it } from 'node:test';
 import { deviationLine, renderReminder, renderRelease, renderResult, zoneTimes } from './format.js';
 import { instrumentName, oxfordList, watchedInstrumentsSentence } from '../util/instruments.js';
-import { type EconomicEvent } from './schema.js';
+import { announcesSchedule, expectsNoActual, timeIsUnscheduled, type EconomicEvent } from './schema.js';
 
 /**
  * Rendering tests. Run with `npm test`.
@@ -25,6 +25,10 @@ function event(iso: string, over: Partial<EconomicEvent> = {}): EconomicEvent {
     actual: null,
     revised: null,
     actualReceivedAt: null,
+    isTentative: false,
+    isAllDay: false,
+    isSpeech: false,
+    isReport: false,
     providerRowId: null,
     providerSeriesId: null,
     potency: null,
@@ -153,6 +157,130 @@ describe('renderResult', () => {
       'Actual above forecast by 30K.',
     ]);
     assert.doesNotMatch(out, /bullish|bearish|buy|sell|positive|negative/i);
+  });
+});
+
+describe('event classification', () => {
+  // The repo's SQL filters mirror these predicates; the DB behaviour is
+  // verified separately against Postgres.
+  it('treats a tentative or all-day event as unscheduled, so it gets no timed posts', () => {
+    const boj = event('2026-07-31T03:00:00Z', { isTentative: true });
+    assert.equal(timeIsUnscheduled(boj), true);
+    assert.equal(announcesSchedule(boj), false, 'a tentative event must produce no T-5 and no release');
+
+    const allDay = event('2026-07-31T00:00:00Z', { isAllDay: true });
+    assert.equal(announcesSchedule(allDay), false);
+  });
+
+  it('leaves an ordinary numeric event scheduled', () => {
+    const nfp = event('2026-07-31T12:30:00Z');
+    assert.equal(timeIsUnscheduled(nfp), false);
+    assert.equal(announcesSchedule(nfp), true);
+    assert.equal(expectsNoActual(nfp), false, 'a numeric print must still be polled for a result');
+  });
+
+  it('knows a speech or report will never print a number', () => {
+    assert.equal(expectsNoActual(event('2026-07-31T18:00:00Z', { isSpeech: true })), true);
+    assert.equal(expectsNoActual(event('2026-07-31T18:00:00Z', { isReport: true })), true);
+  });
+});
+
+describe('speeches and value-less events', () => {
+  const speech = (): EconomicEvent =>
+    event('2026-07-29T05:49:00Z', {
+      currency: 'USD',
+      title: 'FOMC Press Conference',
+      isSpeech: true,
+      previous: null,
+      forecast: null,
+    });
+
+  it('renders a value-less speech with no Previous/Forecast block and no empty lines', () => {
+    const out = renderReminder(speech());
+    assert.deepEqual(out.split('\n'), [
+      '<b>USD · FOMC Press Conference</b>',
+      'Begins in 5 minutes.',
+      '',
+      'London 06:49 · New York 01:49 · Dubai 09:49',
+      '',
+      'Elevated volatility expected on EUR/USD, Gold, and EUR/JPY.',
+    ]);
+    assert.doesNotMatch(out, /Previous|Forecast/);
+    assert.doesNotMatch(out, /\n\n\n/, 'no blank-line gap left where the readings block was');
+  });
+
+  it('says "Begins"/"Starting" for a speech rather than "Releases"/"Releasing"', () => {
+    assert.match(renderReminder(speech()), /^.*\nBegins in 5 minutes\./);
+    assert.equal(renderRelease(speech()).split('\n')[1], 'Starting now.');
+  });
+
+  it('keeps "Releases"/"Releasing" for a written report', () => {
+    const report = event('2026-07-29T05:49:00Z', { isReport: true, previous: null, forecast: null });
+    assert.equal(renderReminder(report).split('\n')[1], 'Releases in 5 minutes.');
+    assert.equal(renderRelease(report).split('\n')[1], 'Releasing now.');
+  });
+});
+
+describe('tentative results', () => {
+  it('opens by stating the time was not scheduled', () => {
+    const boj = event('2026-07-31T03:00:00Z', {
+      currency: 'JPY',
+      title: 'BoJ Interest Rate Decision',
+      isTentative: true,
+      actual: '0.75%',
+      forecast: '0.5%',
+      previous: '0.5%',
+    });
+    assert.deepEqual(renderResult(boj).split('\n'), [
+      'Release time was not scheduled in advance.',
+      '',
+      '<b>JPY · BoJ Interest Rate Decision</b>',
+      '',
+      'Actual: 0.75%',
+      'Forecast: 0.5%',
+      'Previous: 0.5%',
+      '',
+      'Actual above forecast by 0.25pp.',
+    ]);
+  });
+
+  it('adds no such line to an ordinary scheduled result', () => {
+    const out = renderResult(event('2026-07-29T12:30:00Z', { actual: '210K' }));
+    assert.doesNotMatch(out, /not scheduled in advance/);
+    assert.equal(out.split('\n')[0], '<b>USD · Non-Farm Payrolls</b>');
+  });
+});
+
+describe('an ordinary numeric event is unchanged', () => {
+  it('renders the T-5 exactly as before the classification work', () => {
+    assert.deepEqual(renderReminder(event('2026-07-29T05:49:00Z')).split('\n'), [
+      '<b>USD · Non-Farm Payrolls</b>',
+      'Releases in 5 minutes.',
+      '',
+      'Previous: 145K',
+      'Forecast: 180K',
+      '',
+      'London 06:49 · New York 01:49 · Dubai 09:49',
+      '',
+      'Elevated volatility expected on EUR/USD, Gold, and EUR/JPY.',
+    ]);
+  });
+
+  it('renders the release and result exactly as before', () => {
+    assert.deepEqual(renderRelease(event('2026-07-29T12:30:00Z')).split('\n'), [
+      '<b>USD · Non-Farm Payrolls</b>',
+      'Releasing now.',
+    ]);
+    assert.deepEqual(renderResult(event('2026-07-29T12:30:00Z', { actual: '210K', revised: '142K' })).split('\n'), [
+      '<b>USD · Non-Farm Payrolls</b>',
+      '',
+      'Actual: 210K',
+      'Forecast: 180K',
+      'Previous: 145K',
+      'Revised: 142K',
+      '',
+      'Actual above forecast by 30K.',
+    ]);
   });
 });
 

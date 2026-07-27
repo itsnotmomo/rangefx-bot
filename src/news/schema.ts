@@ -52,6 +52,16 @@ export const economicEvents = pgTable('economic_events', {
   revised: text('revised'),
   actualReceivedAt: timestamp('actual_received_at', { withTimezone: true }),
 
+  // --- Provider classification. These change behaviour; see 0011.
+  /** Release time is an estimate, not a schedule (BoJ). */
+  isTentative: boolean('is_tentative').notNull().default(false),
+  /** Event is dated but not timed — same consequence as tentative. */
+  isAllDay: boolean('is_all_day').notNull().default(false),
+  /** A speech or press conference: "Begins"/"Starting", and never prints. */
+  isSpeech: boolean('is_speech').notNull().default(false),
+  /** A statement or written report: never prints a number. */
+  isReport: boolean('is_report').notNull().default(false),
+
   // --- Informational only. NOTHING below is read by the renderer; the
   // deviation line stays ours to compute from actual and forecast.
   /** RapidAPI `id`, verbatim. */
@@ -124,6 +134,39 @@ export const newsProviderRequests = pgTable('news_provider_requests', {
 }));
 
 export type ProviderEndpoint = 'calendar' | 'result';
+
+/**
+ * Scheduling predicates.
+ *
+ * The repo's SQL filters mirror these exactly. Kept here, next to the columns
+ * they read, so the TypeScript and the WHERE clauses stay recognisably the
+ * same rule — and so the behaviour is unit-testable without a database.
+ */
+
+/**
+ * True when the provider's timestamp is an estimate rather than a schedule.
+ *
+ * The number still looks like a real time — BoJ carries 03:00 — so nothing
+ * downstream can infer this from the timestamp alone. Everything that would
+ * fire *relative to* that time must be suppressed: silent beats wrong.
+ */
+export function timeIsUnscheduled(e: { isTentative: boolean; isAllDay: boolean }): boolean {
+  return e.isTentative || e.isAllDay;
+}
+
+/** True when this event should get T-5 and release posts on a timetable. */
+export function announcesSchedule(e: { isTentative: boolean; isAllDay: boolean }): boolean {
+  return !timeIsUnscheduled(e);
+}
+
+/**
+ * True when the event will never produce a number — a speech, a press
+ * conference, a written statement. Polling these forever would spend quota on
+ * an actual that is never coming.
+ */
+export function expectsNoActual(e: { isSpeech: boolean; isReport: boolean }): boolean {
+  return e.isSpeech || e.isReport;
+}
 
 export type EconomicEvent = typeof economicEvents.$inferSelect;
 export type NewsDelivery = typeof newsDeliveries.$inferSelect;

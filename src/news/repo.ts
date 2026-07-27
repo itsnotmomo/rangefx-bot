@@ -1,4 +1,4 @@
-import { and, asc, count, eq, gt, gte, isNull, lt, lte, ne, notExists, or, sql } from 'drizzle-orm';
+import { and, asc, count, eq, gt, gte, isNotNull, isNull, lt, lte, ne, notExists, or, sql } from 'drizzle-orm';
 import { db } from '../db/index.js';
 import {
   economicEvents,
@@ -99,6 +99,10 @@ export async function upsertEvents(provider: string, events: RawEvent[]): Promis
     forecast: e.forecast,
     actual: e.actual,
     revised: e.revised,
+    isTentative: e.isTentative ?? false,
+    isAllDay: e.isAllDay ?? false,
+    isSpeech: e.isSpeech ?? false,
+    isReport: e.isReport ?? false,
     // Informational passthrough — recorded, never rendered.
     providerRowId: e.meta?.providerRowId ?? null,
     providerSeriesId: e.meta?.providerSeriesId ?? null,
@@ -122,6 +126,13 @@ export async function upsertEvents(provider: string, events: RawEvent[]): Promis
         forecast: sql`excluded.forecast`,
         actual: sql`coalesce(excluded.actual, ${economicEvents.actual})`,
         revised: sql`coalesce(excluded.revised, ${economicEvents.revised})`,
+        // Overwritten rather than coalesced: these are never null, and a
+        // provider that reclassifies an event (tentative -> scheduled once the
+        // time is fixed) must be able to say so.
+        isTentative: sql`excluded.is_tentative`,
+        isAllDay: sql`excluded.is_all_day`,
+        isSpeech: sql`excluded.is_speech`,
+        isReport: sql`excluded.is_report`,
         // Same rule as the readings: a later import that omits a field must
         // not erase what an earlier one captured.
         providerRowId: sql`coalesce(excluded.provider_row_id, ${economicEvents.providerRowId})`,
@@ -160,6 +171,15 @@ function noDelivery(kind: DeliveryKind) {
   );
 }
 
+/**
+ * SQL mirrors of the predicates in schema.ts. Kept as named constants so the
+ * WHERE clauses read as the same rule the unit tests assert.
+ */
+/** The provider gave us a real schedule, not an estimate. */
+const timeIsScheduled = sql`not (${economicEvents.isTentative} or ${economicEvents.isAllDay})`;
+/** The event can actually print a number. */
+const mayPrintActual = sql`not (${economicEvents.isSpeech} or ${economicEvents.isReport})`;
+
 /** Correlated "this event HAS a delivery of `kind`". */
 function hasDelivery(kind: DeliveryKind) {
   return sql`exists (
@@ -182,7 +202,15 @@ export async function dueReminders(now: Date = new Date()): Promise<EconomicEven
   return db
     .select()
     .from(economicEvents)
-    .where(and(gte(economicEvents.releaseAt, from), lt(economicEvents.releaseAt, to), noDelivery('pre_5m')))
+    .where(
+      and(
+        gte(economicEvents.releaseAt, from),
+        lt(economicEvents.releaseAt, to),
+        // An estimated time must never trigger a timed post.
+        timeIsScheduled,
+        noDelivery('pre_5m'),
+      ),
+    )
     .orderBy(asc(economicEvents.releaseAt));
 }
 
@@ -197,7 +225,14 @@ export async function dueReleases(now: Date = new Date(), lookbackMinutes = 5): 
   return db
     .select()
     .from(economicEvents)
-    .where(and(lte(economicEvents.releaseAt, now), gt(economicEvents.releaseAt, floor), noDelivery('release')))
+    .where(
+      and(
+        lte(economicEvents.releaseAt, now),
+        gt(economicEvents.releaseAt, floor),
+        timeIsScheduled,
+        noDelivery('release'),
+      ),
+    )
     .orderBy(asc(economicEvents.releaseAt));
 }
 
@@ -216,7 +251,43 @@ export async function pendingResults(now: Date = new Date(), windowMinutes: numb
         lte(economicEvents.releaseAt, now),
         gt(economicEvents.releaseAt, floor),
         isNull(economicEvents.actual),
+        // A speech or statement never prints; polling it spends quota on a
+        // number that is not coming.
+        mayPrintActual,
         hasDelivery('release'),
+        noDelivery('result'),
+      ),
+    )
+    .orderBy(asc(economicEvents.releaseAt));
+}
+
+/**
+ * Tentative events whose actual has since appeared.
+ *
+ * These never got a T-5 or a release post, because their timestamp was an
+ * estimate — so there is no message to edit and nothing was promised. Once a
+ * number exists we announce it once, as a fresh post.
+ *
+ * Costs no provider quota: the actual arrives via the ordinary import, so this
+ * is a pure database read. That is deliberate — polling an unscheduled event
+ * until its real time arrived could mean hours of requests per event.
+ *
+ * Bounded by `maxAgeHours` so enabling the module cannot backfill a flood of
+ * historical prints into the topic.
+ */
+export async function pendingTentativeResults(
+  now: Date = new Date(),
+  maxAgeHours = 24,
+): Promise<EconomicEvent[]> {
+  const floor = new Date(now.getTime() - maxAgeHours * 3_600_000);
+  return db
+    .select()
+    .from(economicEvents)
+    .where(
+      and(
+        gt(economicEvents.releaseAt, floor),
+        sql`${economicEvents.isTentative} or ${economicEvents.isAllDay}`,
+        isNotNull(economicEvents.actual),
         noDelivery('result'),
       ),
     )
@@ -410,7 +481,16 @@ export async function statusSnapshot(now: Date = new Date(), limit = 5): Promise
   const [awaiting] = await db
     .select({ n: count() })
     .from(economicEvents)
-    .where(and(lte(economicEvents.releaseAt, now), isNull(economicEvents.actual), hasDelivery('release')));
+    .where(
+      and(
+        lte(economicEvents.releaseAt, now),
+        isNull(economicEvents.actual),
+        // Speeches and statements are not "awaiting" anything — counting them
+        // would show a number that never falls.
+        mayPrintActual,
+        hasDelivery('release'),
+      ),
+    );
 
   return {
     lastImportAt: settings.lastImportAt,

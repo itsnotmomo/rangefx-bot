@@ -17,6 +17,7 @@ import {
   markImported,
   passesFilter,
   pendingResults,
+  pendingTentativeResults,
   pruneProviderRequests,
   releaseMessageId,
   setDeliveryMessageId,
@@ -172,6 +173,12 @@ export async function runResultPoll(api: Api): Promise<void> {
   const settings = await getSettings();
   if (settings.paused) return;
 
+  // Tentative events first: a pure database read, no provider call. Their
+  // actual arrives via the ordinary import rather than by polling, because
+  // polling an unscheduled event until its real time came round could mean
+  // hours of requests each.
+  await deliverTentativeResults(api, settings);
+
   const pending = await pendingResults(new Date(), cadence.pollWindowMinutes);
   if (pending.length === 0) return;
 
@@ -204,6 +211,36 @@ export async function runResultPoll(api: Api): Promise<void> {
       if (!result || result.actual === null) continue;
       await deliverResult(api, event, result, settings);
     }
+  }
+}
+
+/**
+ * Announce tentative events whose number has since appeared.
+ *
+ * These were deliberately never posted on a schedule, so there is no message
+ * to edit and no promise outstanding — this is the ONLY message such an event
+ * ever produces, and it says up front that the timing was not scheduled.
+ */
+async function deliverTentativeResults(api: Api, settings: NewsSettings): Promise<void> {
+  const ready = await pendingTentativeResults();
+  if (ready.length === 0) return;
+
+  const silent = shouldSilence(settings);
+  for (const event of ready) {
+    if (!(await claimDelivery(event.id, 'result'))) continue;
+
+    const messageId = await sendNews(api, renderResult(event), silent);
+    if (messageId === null) {
+      await dropDelivery(event.id, 'result');
+      continue;
+    }
+    await setDeliveryMessageId(event.id, 'result', messageId);
+    log.info('tentative result announced', {
+      eventId: event.id,
+      title: event.title,
+      actual: event.actual,
+      messageId,
+    });
   }
 }
 

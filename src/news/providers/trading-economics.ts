@@ -124,6 +124,10 @@ function toRawEvent(row: TeRow): RawEvent | null {
     forecast: reading(row.Forecast),
     actual: reading(row.Actual),
     revised: reading(row.Revised),
+    // TE's DateSpan=1 means "estimated date and time" — the same thing
+    // RapidAPI calls isTentative. Mapping it to the shared flag means the
+    // suppression rules work identically whichever provider is active.
+    isTentative: String(row.DateSpan ?? '0') === '1',
   };
 }
 
@@ -239,9 +243,9 @@ export class TradingEconomicsProvider implements CalendarProvider {
         dropped++;
         continue;
       }
-      // DateSpan 1 means TE only estimated the release time. The event is real,
-      // so we keep it, but a T-5 notice on an estimate is worth knowing about.
-      if (String(row.DateSpan ?? '0') === '1') estimatedTime++;
+      // DateSpan 1 means TE only estimated the release time. The event is kept
+      // but flagged, and the scheduling rules suppress its timed posts.
+      if (event.isTentative) estimatedTime++;
       mapped.push(event);
     }
 

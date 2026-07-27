@@ -61,6 +61,12 @@ interface RapidRow {
   unit?: string;
   /** Ignored on purpose — we compute deviation ourselves, mechanically. */
   isBetterThanExpected?: boolean;
+  // Classification flags. These drive behaviour, not display.
+  /** Release time is an estimate — BoJ still carries a plausible 03:00. */
+  isTentative?: boolean;
+  isAllDay?: boolean;
+  isSpeech?: boolean;
+  isReport?: boolean;
   // Captured as informational only; never rendered.
   potency?: string | number | null;
   ratioDeviation?: string | number | null;
@@ -240,6 +246,12 @@ export class RapidApiProvider implements CalendarProvider {
       forecast: reading(row.consensus),
       actual: reading(row.actual),
       revised: reading(row.revised),
+      // Strict === true: an absent flag must mean "ordinary scheduled event",
+      // never something truthy-but-unexpected changing how we post.
+      isTentative: row.isTentative === true,
+      isAllDay: row.isAllDay === true,
+      isSpeech: row.isSpeech === true,
+      isReport: row.isReport === true,
       // Informational only — captured for the record, never rendered.
       meta: {
         providerRowId: reading(row.id),
