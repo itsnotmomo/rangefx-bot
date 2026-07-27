@@ -1,5 +1,5 @@
-import { InlineKeyboard, type Bot } from 'grammy';
-import { isAdmin } from '../config/index.js';
+import { InlineKeyboard, type Api, type Bot, type Context } from 'grammy';
+import { config, isAdmin } from '../config/index.js';
 import {
   AUDIENCE_LABEL,
   audienceCount,
@@ -7,17 +7,35 @@ import {
   audienceIds,
   type AudienceKey,
 } from '../services/audience.js';
+import {
+  createBroadcast,
+  getBroadcast,
+  interruptedBroadcasts,
+  latestBroadcast,
+  progressOf,
+  runningBroadcasts,
+  setStatus,
+  snapshotAudience,
+  type BroadcastContent,
+} from '../services/broadcasts.js';
 import { findSupportRoute } from '../services/support.js';
-import { broadcastTo, type BroadcastContent } from './broadcast.js';
-import { safeCall } from '../telegram/safe.js';
+import { activeBroadcastId, rateFor, runBroadcast, summaryLines } from './broadcast.js';
+import { type Broadcast } from '../db/schema.js';
+import { safeCall, safeSendMessage } from '../telegram/safe.js';
 import { log } from '../util/logger.js';
 
 /**
  * Interactive broadcast: /broadcast → pick audience (live counts) → send the
- * content (text, or photo+caption) → preview exactly as users will see it →
- * confirm → throttled send with progress + final report. /cancel aborts at any
- * step. State is per-admin and in-memory: a restart simply drops an unfinished
- * draft, which is the safe failure mode for a mass-send tool.
+ * content → preview → confirm → enqueue.
+ *
+ * Confirming does NOT send inside the webhook handler. It writes a broadcasts
+ * row plus a frozen recipient snapshot, replies immediately, and starts the
+ * runner detached. Awaiting the send here is what killed the process on Jul 27:
+ * grammY rejects any update still running after timeoutMilliseconds (10s), and
+ * Express 4 turns that rejection into a fatal unhandled rejection.
+ *
+ * Draft state stays in memory — losing an unconfirmed draft on restart is the
+ * safe failure mode. Everything after confirmation is in the database.
  */
 
 interface FlowState {
@@ -31,11 +49,87 @@ const flows = new Map<number, FlowState>();
 
 const AUDIENCE_KEYS: AudienceKey[] = ['all', 'leads', 'churned', 'active'];
 
+/** Gate: only ADMIN_USER_IDS. */
+function requireAdmin(ctx: Context): boolean {
+  const uid = ctx.from?.id;
+  return uid !== undefined && isAdmin(uid);
+}
+
+/** DM every admin. Never throws — used from detached code paths. */
+export async function notifyAdmins(api: Api, text: string): Promise<void> {
+  for (const adminId of config.adminUserIds) {
+    await safeSendMessage(api, adminId, text);
+  }
+}
+
+/**
+ * Run a broadcast detached from any webhook request, then report. Fully
+ * guarded: this is deliberately not awaited by a handler, so anything escaping
+ * it would become the exact unhandled rejection that caused the incident.
+ */
+function startDetached(api: Api, broadcast: Broadcast, statusChatId?: number, statusMessageId?: number): void {
+  const report = async (): Promise<void> => {
+    try {
+      await runBroadcast(api, broadcast, (p) => {
+        if (statusChatId === undefined || statusMessageId === undefined) return;
+        void safeCall('editBroadcastStatus', () =>
+          api.editMessageText(
+            statusChatId,
+            statusMessageId,
+            `Broadcast #${broadcast.id} — sending…\n` +
+              `${p.sent + p.failed}/${p.total} · Sent: ${p.sent} · Failed: ${p.failed}`,
+          ),
+        );
+      });
+    } catch (err) {
+      log.error('broadcast run failed', { broadcastId: broadcast.id, error: err });
+      await setStatus(broadcast.id, 'interrupted').catch(() => {});
+    }
+    try {
+      const fresh = await getBroadcast(broadcast.id);
+      if (fresh) await notifyAdmins(api, (await summaryLines(fresh)).join('\n'));
+    } catch (err) {
+      log.error('broadcast summary failed', { broadcastId: broadcast.id, error: err });
+    }
+  };
+  void report().catch((err) => log.error('broadcast reporter failed', { broadcastId: broadcast.id, error: err }));
+}
+
+/**
+ * On boot, any broadcast still marked 'running' was cut off mid-flight — the
+ * runner only ever leaves that state by completing. Flag it and tell the
+ * admins. Deliberately does NOT auto-resume: a restart loop would otherwise
+ * re-send on every boot, and resuming is a decision with real-world cost.
+ */
+export async function reportInterruptedBroadcasts(api: Api): Promise<void> {
+  const stale = await runningBroadcasts();
+  for (const b of stale) {
+    await setStatus(b.id, 'interrupted');
+    const p = await progressOf(b.id);
+    log.warn('interrupted broadcast detected', { broadcastId: b.id, ...p });
+    await notifyAdmins(
+      api,
+      [
+        `⚠️ Broadcast #${b.id} was interrupted.`,
+        '',
+        `Audience: ${b.audience} · ${b.kind}`,
+        `Sent: ${p.sent} · Failed: ${p.failed} · Not yet attempted: ${p.pending}`,
+        '',
+        'It will NOT resume on its own. Recipients already sent to are recorded,',
+        'so a resume skips them.',
+        '',
+        `/broadcast_resume ${b.id} — send to the ${p.pending} remaining`,
+        `/broadcast_cancel ${b.id} — close it out and send nothing more`,
+      ].join('\n'),
+    );
+  }
+}
+
 export function registerBroadcastFlow(bot: Bot): void {
   bot.command('broadcast', async (ctx, next) => {
     // Non-admins fall through to the unknown-command response.
-    if (!ctx.from || !isAdmin(ctx.from.id)) return next();
-    flows.delete(ctx.from.id);
+    if (!requireAdmin(ctx)) return next();
+    flows.delete(ctx.from!.id);
 
     const counts = await audienceCounts();
     const kb = new InlineKeyboard();
@@ -49,18 +143,82 @@ export function registerBroadcastFlow(bot: Bot): void {
   });
 
   bot.command('cancel', async (ctx, next) => {
-    // Non-admins fall through to the unknown-command response.
-    if (!ctx.from || !isAdmin(ctx.from.id)) return next();
-    const had = flows.delete(ctx.from.id);
+    if (!requireAdmin(ctx)) return next();
+    const had = flows.delete(ctx.from!.id);
     await ctx.reply(had ? 'Broadcast cancelled.' : 'Nothing to cancel.');
   });
 
+  // ---- Status of the most recent broadcast ----
+  bot.command('broadcast_status', async (ctx, next) => {
+    if (!requireAdmin(ctx)) return next();
+    const arg = (ctx.match ?? '').toString().trim();
+    const b = arg ? await getBroadcast(Number(arg)) : await latestBroadcast();
+    if (!b) {
+      await ctx.reply(arg ? `No broadcast #${arg}.` : 'No broadcast has ever run.');
+      return;
+    }
+    const lines = await summaryLines(b);
+    const running = activeBroadcastId();
+    if (running === b.id) lines.push('', 'Currently running in this process.');
+    else if (b.status === 'interrupted') lines.push('', `/broadcast_resume ${b.id} to continue.`);
+    await ctx.reply(lines.join('\n'));
+  });
+
+  // ---- Explicit resume of an interrupted broadcast ----
+  bot.command('broadcast_resume', async (ctx, next) => {
+    if (!requireAdmin(ctx)) return next();
+    const arg = (ctx.match ?? '').toString().trim();
+    const b = arg ? await getBroadcast(Number(arg)) : (await interruptedBroadcasts())[0];
+    if (!b) {
+      await ctx.reply(
+        arg ? `No broadcast #${arg}.` : 'No interrupted broadcast. /broadcast_status for the latest.',
+      );
+      return;
+    }
+    if (activeBroadcastId() !== null) {
+      await ctx.reply(`Broadcast #${activeBroadcastId()} is already running. Wait for it to finish.`);
+      return;
+    }
+    if (b.status === 'completed' || b.status === 'cancelled') {
+      await ctx.reply(`Broadcast #${b.id} is ${b.status}. Nothing to resume.`);
+      return;
+    }
+    const p = await progressOf(b.id);
+    if (p.pending === 0) {
+      await setStatus(b.id, 'completed', { finished: true });
+      await ctx.reply(`Broadcast #${b.id} had nothing pending — marked complete.`);
+      return;
+    }
+    log.info('broadcast resume requested', { broadcastId: b.id, by: ctx.from!.id, pending: p.pending });
+    const status = await ctx.reply(
+      `Resuming broadcast #${b.id} — ${p.pending} remaining (${p.sent} already sent, skipped).`,
+    );
+    startDetached(bot.api, b, status.chat.id, status.message_id);
+  });
+
+  // ---- Close out an interrupted broadcast without sending more ----
+  bot.command('broadcast_cancel', async (ctx, next) => {
+    if (!requireAdmin(ctx)) return next();
+    const arg = (ctx.match ?? '').toString().trim();
+    const b = arg ? await getBroadcast(Number(arg)) : (await interruptedBroadcasts())[0];
+    if (!b) {
+      await ctx.reply(arg ? `No broadcast #${arg}.` : 'No interrupted broadcast to cancel.');
+      return;
+    }
+    if (activeBroadcastId() === b.id) {
+      await ctx.reply(`Broadcast #${b.id} is running right now — cannot cancel mid-flight.`);
+      return;
+    }
+    await setStatus(b.id, 'cancelled', { finished: true });
+    await ctx.reply(`Broadcast #${b.id} cancelled. Nothing further will be sent.`);
+  });
+
   bot.callbackQuery(/^bcast:aud:(all|leads|churned|active)$/, async (ctx) => {
-    if (!ctx.from || !isAdmin(ctx.from.id)) return void (await ctx.answerCallbackQuery());
+    if (!requireAdmin(ctx)) return void (await ctx.answerCallbackQuery());
     await ctx.answerCallbackQuery();
     const key = ctx.match![1] as AudienceKey;
     const count = await audienceCount(key);
-    flows.set(ctx.from.id, { step: 'content', audience: key, count });
+    flows.set(ctx.from!.id, { step: 'content', audience: key, count });
     await safeCall('editMessageText', () =>
       ctx.editMessageText(
         [
@@ -74,56 +232,75 @@ export function registerBroadcastFlow(bot: Bot): void {
   });
 
   bot.callbackQuery('bcast:cancel', async (ctx) => {
-    if (!ctx.from || !isAdmin(ctx.from.id)) return void (await ctx.answerCallbackQuery());
+    if (!requireAdmin(ctx)) return void (await ctx.answerCallbackQuery());
     await ctx.answerCallbackQuery();
-    flows.delete(ctx.from.id);
+    flows.delete(ctx.from!.id);
     await safeCall('editMessageText', () => ctx.editMessageText('Broadcast cancelled.'));
   });
 
   bot.callbackQuery('bcast:send', async (ctx) => {
-    if (!ctx.from || !isAdmin(ctx.from.id)) return void (await ctx.answerCallbackQuery());
-    const state = flows.get(ctx.from.id);
+    if (!requireAdmin(ctx)) return void (await ctx.answerCallbackQuery());
+    const state = flows.get(ctx.from!.id);
     if (!state || state.step !== 'confirm' || !state.content) {
       await ctx.answerCallbackQuery({ text: 'Nothing pending — start with /broadcast.' });
       return;
     }
     await ctx.answerCallbackQuery();
-    flows.delete(ctx.from.id);
     await safeCall('editMessageReplyMarkup', () => ctx.editMessageReplyMarkup());
 
-    log.info('broadcast confirmed', { by: ctx.from.id, audience: state.audience });
-    const ids = await audienceIds(state.audience);
-    const status = await ctx.reply(`Sending to ${ids.length} users…`);
+    if (activeBroadcastId() !== null) {
+      flows.delete(ctx.from!.id);
+      await ctx.reply(`Broadcast #${activeBroadcastId()} is already running. Wait for it to finish.`);
+      return;
+    }
 
-    const final = await broadcastTo(bot.api, ids, state.content, (p) => {
-      const processed = p.sent + p.failed + p.blocked;
-      void safeCall('editBroadcastStatus', () =>
-        bot.api.editMessageText(
-          status.chat.id,
-          status.message_id,
-          `Sending… ${processed}/${p.total}\nSent: ${p.sent} · Blocked: ${p.blocked} · Failed: ${p.failed}`,
-        ),
-      );
+    // Durable idempotency. Telegram repeats the update_id verbatim when it
+    // retries an unacknowledged webhook, and the unique index on
+    // idempotency_key rejects the second insert. In-memory flow state cannot
+    // guarantee this: it is empty after a restart, which is exactly when a
+    // retry arrives.
+    const idempotencyKey = `cbq:${ctx.update.update_id}`;
+    const { broadcast, created } = await createBroadcast({
+      audience: state.audience,
+      content: state.content,
+      createdBy: BigInt(ctx.from!.id),
+      idempotencyKey,
+    });
+    flows.delete(ctx.from!.id);
+
+    if (!created) {
+      log.warn('duplicate broadcast confirmation ignored', { broadcastId: broadcast.id, idempotencyKey });
+      await ctx.reply(`That confirmation was already processed as broadcast #${broadcast.id}.`);
+      return;
+    }
+
+    log.info('broadcast confirmed', {
+      broadcastId: broadcast.id,
+      by: ctx.from!.id,
+      audience: state.audience,
     });
 
-    await safeCall('editBroadcastStatus', () =>
-      bot.api.editMessageText(
-        status.chat.id,
-        status.message_id,
-        [
-          'Broadcast complete.',
-          `Sent: ${final.sent}`,
-          `Blocked: ${final.blocked} (marked; excluded from future broadcasts)`,
-          `Failed: ${final.failed}`,
-          `Total recipients: ${final.total}`,
-        ].join('\n'),
-      ),
+    // Freeze the recipient set now. Resume reads this snapshot, never the
+    // audience query — the runner marks users blocked as it goes, and every
+    // audience predicate excludes blocked users.
+    const ids = await audienceIds(state.audience);
+    await snapshotAudience(broadcast.id, ids);
+
+    const status = await ctx.reply(
+      [
+        `Broadcast #${broadcast.id} queued.`,
+        `Audience: ${AUDIENCE_LABEL[state.audience]} — ${ids.length} recipients.`,
+        `Rate: ${rateFor(state.content)}/sec (${broadcast.kind}).`,
+        '',
+        `/broadcast_status ${broadcast.id} for progress.`,
+      ].join('\n'),
     );
+
+    // Detached on purpose: this handler must return in milliseconds.
+    startDetached(bot.api, broadcast, status.chat.id, status.message_id);
   });
 
   // Content capture: the admin's next message while a flow awaits content.
-  // Passes through (next) for everything else — including native replies to
-  // forwarded support messages, which always win over a broadcast draft.
   bot.on('message', async (ctx, next) => {
     const from = ctx.from;
     if (!from || !isAdmin(from.id) || ctx.chat.type !== 'private') return next();
@@ -155,7 +332,6 @@ export function registerBroadcastFlow(bot: Bot): void {
     state.content = content;
     state.step = 'confirm';
 
-    // Preview exactly as users will see it, then ask for the go.
     if (content.photoFileId) {
       await safeCall('sendPhoto', () =>
         ctx.api.sendPhoto(ctx.chat.id, content.photoFileId!, { caption: content.caption }),
@@ -163,8 +339,9 @@ export function registerBroadcastFlow(bot: Bot): void {
     } else {
       await ctx.reply(content.text!);
     }
-    await ctx.reply(`That's the preview above. Send to ${state.count} users?`, {
-      reply_markup: new InlineKeyboard().text('Send', 'bcast:send').text('Cancel', 'bcast:cancel'),
-    });
+    await ctx.reply(
+      `That's the preview above. Send to ${state.count} users at ${rateFor(content)}/sec?`,
+      { reply_markup: new InlineKeyboard().text('Send', 'bcast:send').text('Cancel', 'bcast:cancel') },
+    );
   });
 }

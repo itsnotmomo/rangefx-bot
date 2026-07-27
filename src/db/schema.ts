@@ -160,7 +160,58 @@ export const supportRoutes = pgTable('support_routes', {
   chatMsgUnique: uniqueIndex('support_routes_chat_msg_unique').on(t.adminChatId, t.messageId),
 }));
 
+/**
+ * One row per confirmed broadcast. `idempotencyKey` is unique and derived from
+ * the confirming Telegram update id, so a webhook retry of that confirmation
+ * collides on the index rather than starting a second run.
+ */
+export const broadcasts = pgTable('broadcasts', {
+  id: serial('id').primaryKey(),
+  audience: text('audience').notNull(),
+  /** 'text' | 'photo'. */
+  kind: text('kind').notNull(),
+  /** JSON: {"text":…} or {"photoFileId":…,"caption":…}. Survives a restart. */
+  content: text('content').notNull(),
+  /** 'running' | 'completed' | 'interrupted' | 'cancelled'. */
+  status: text('status').notNull().default('running'),
+  total: integer('total').notNull().default(0),
+  createdBy: bigint('created_by', { mode: 'bigint' }),
+  idempotencyKey: text('idempotency_key'),
+  startedAt: timestamp('started_at', { withTimezone: true }),
+  finishedAt: timestamp('finished_at', { withTimezone: true }),
+  createdAt: timestamp('created_at', { withTimezone: true }).notNull().defaultNow(),
+  updatedAt: timestamp('updated_at', { withTimezone: true }).notNull().defaultNow(),
+}, (t) => ({
+  idempotencyUnique: uniqueIndex('broadcasts_idempotency_key_unique').on(t.idempotencyKey),
+  statusIdx: index('broadcasts_status_idx').on(t.status),
+}));
+
+/**
+ * The audience snapshot, captured once at enqueue time. Resume reads this and
+ * never re-runs the audience query — the runner writes users.blocked_at as it
+ * goes, and every audience predicate excludes blocked users, so the same query
+ * returns a smaller row set partway through a run.
+ */
+export const broadcastSends = pgTable('broadcast_sends', {
+  id: serial('id').primaryKey(),
+  broadcastId: integer('broadcast_id')
+    .notNull()
+    .references(() => broadcasts.id, { onDelete: 'cascade' }),
+  telegramUserId: bigint('telegram_user_id', { mode: 'bigint' }).notNull(),
+  /** 'pending' | 'sent' | 'failed'. */
+  status: text('status').notNull().default('pending'),
+  /** Telegram error_code (403, 400, 429, …); null unless status = 'failed'. */
+  errorCode: integer('error_code'),
+  error: text('error'),
+  sentAt: timestamp('sent_at', { withTimezone: true }),
+}, (t) => ({
+  sendUnique: uniqueIndex('broadcast_sends_unique').on(t.broadcastId, t.telegramUserId),
+  claimIdx: index('broadcast_sends_claim_idx').on(t.broadcastId, t.status, t.telegramUserId),
+}));
+
 export type User = typeof users.$inferSelect;
 export type NewUser = typeof users.$inferInsert;
 export type Subscription = typeof subscriptions.$inferSelect;
 export type AccessGrant = typeof accessGrants.$inferSelect;
+export type Broadcast = typeof broadcasts.$inferSelect;
+export type BroadcastSend = typeof broadcastSends.$inferSelect;

@@ -84,6 +84,11 @@ export const config = {
 
   // Broadcast throttling (Telegram allows ~30 msg/s globally to different users).
   broadcastPerSecond: intOf('BROADCAST_PER_SECOND', 25),
+  /**
+   * Photo sends are heavier than text on Telegram's side and draw 429s sooner,
+   * so they get their own, lower default.
+   */
+  broadcastPhotoPerSecond: intOf('BROADCAST_PHOTO_PER_SECOND', 15),
 
   /**
    * DM admins when a user starts the bot for the first time. Turn off during

@@ -10,7 +10,7 @@ import { log } from '../util/logger.js';
 
 export type SafeResult<T> =
   | { ok: true; value: T }
-  | { ok: false; blocked: boolean; retryAfter?: number; error: string };
+  | { ok: false; blocked: boolean; retryAfter?: number; code?: number; error: string };
 
 export async function safeCall<T>(label: string, fn: () => Promise<T>): Promise<SafeResult<T>> {
   try {
@@ -24,7 +24,7 @@ export async function safeCall<T>(label: string, fn: () => Promise<T>): Promise<
       if (!blocked) {
         log.warn('telegram api error', { label, code: err.error_code, description: err.description, retryAfter });
       }
-      return { ok: false, blocked, retryAfter, error: err.description };
+      return { ok: false, blocked, retryAfter, code: err.error_code, error: err.description };
     }
     if (err instanceof HttpError) {
       log.warn('telegram network error', { label, error: err });
