@@ -136,14 +136,14 @@ Shown when the user taps **📊 See The Results** or sends /results.
 > Do not take our word for it. Look at the record.
 > Every position has been documented with its entry, stop, and exit.
 >
-> Trailing 12-month return: +72.3%
-> Documented track record: 33 months
-> Average win rate: 49%
-> Positions logged: 1,059
+> Trailing 12-month return: +67.7%
+> Documented track record: 35 months
+> Average win rate: 50%
+> Positions logged: 1,090
 > Best month: +16%
 > Worst month: −2.5%
 >
-> Only one of the 33 documented months closed negative — and it remains part of the public record.
+> Only one of the 35 documented months closed negative — and it remains part of the public record.
 >
 > No deleted losing months. No promises about what happens next. Just the complete record of what has already happened.
 >
@@ -171,9 +171,9 @@ buttons **❓ More Questions · 🚀 Join The Compound** and **⬅️ Back**.
 
 > The Compound is a private Telegram group where you watch the Range trading desk operate live.
 >
-> You see what the desk is trading, the important levels, the execution, and the reasoning behind its decisions as they happen.
+> You see exactly what the desk is trading — the key levels, the execution, and the reasoning behind every decision as it happens — and you get the opportunity to copy their trades in real time and profit alongside them.
 >
-> You remain responsible for your own trades, capital, and risk.
+> You remain responsible for your own trades. Capital at risk.
 
 **What do I receive?**
 
@@ -193,12 +193,12 @@ buttons **❓ More Questions · 🚀 Join The Compound** and **⬅️ Back**.
 **What results should I expect?**
 
 > No result is guaranteed.
-> Different members may enter at different prices, use different risk, or manage positions differently.
+> Members may enter at different prices and manage risk and positions differently.
 >
 > Instead of making promises, we show you the complete documented record:
-> 33 months documented, 1,059 positions logged, and one negative month.
+> 35 months documented, 1,090 positions logged, and only one negative month.
 >
-> You can inspect the full month-by-month record before joining.
+> You can review the full month-by-month record before joining.
 
 **How do I pay?**
 
@@ -208,6 +208,8 @@ buttons **❓ More Questions · 🚀 Join The Compound** and **⬅️ Back**.
 > You can pay using a debit or credit card through Stripe.
 >
 > Once payment succeeds, your private group link is sent in this chat automatically.
+>
+> Prefer to pay with crypto? Send a DM to @RANGESUPPORT.
 
 **How do renewals work?**
 
@@ -457,9 +459,9 @@ Buttons: the three plan buttons (with live prices), then 📊 See The Results.
 >
 > Before you decide, here is the record:
 >
-> 33 months documented
-> 1,059 positions logged
-> +72.3% trailing 12-month return
+> 35 months documented
+> 1,090 positions logged
+> +67.7% trailing 12-month return
 > One negative month
 >
 > Every position is recorded with its entry, stop, and exit.
