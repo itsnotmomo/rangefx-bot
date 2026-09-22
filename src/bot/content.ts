@@ -25,7 +25,7 @@ const en = {
     '',
     'Where you can join a team of professional traders and operate alongside them.',
     '',
-    'Inside The Compound, you see how the team operates in real time, the key levels, the execution, and the reasoning behind every decision.',
+    'Inside The Compound, you see how the team operates in real time — and you can copy their positions and profit alongside them, with the key levels, the executions, and the reasoning behind every trade.',
     '',
     'Press the button “🚀 Join The Compound” or “❓ How It Works” for more info!',
     '',
@@ -151,19 +151,13 @@ const en = {
   ].join('\n'),
 
   'faq.markets.q': 'Which markets do you trade?',
-  'faq.markets.a': [
-    'The desk focuses on:',
-    `• ${instrumentName('EURUSD')}`,
-    `• ${instrumentName('XAUUSD')}`,
-    `• ${instrumentName('EURJPY')}`,
-    '',
-    'The focus is on trading controlled ranges rather than trying to predict every market movement.',
-  ].join('\n'),
+  'faq.markets.a': `Inside The Compound we trade ${instrumentName('EURUSD')}, ${instrumentName('XAUUSD')} and ${instrumentName('EURJPY')}.`,
 
   'faq.results.q': 'What results should I expect?',
   'faq.results.a': [
-    'No result is guaranteed.',
-    'Members may enter at different prices and manage risk and positions differently.',
+    'Inside the room, you can expect anywhere from 3% to 10% gain and 100 to 200 RR per month.',
+    '',
+    'Results may differ based on entry prices and risk management.',
     '',
     'Instead of making promises, we show you the complete documented record:',
     '35 months documented, 1,090 positions logged, and only one negative month.',
