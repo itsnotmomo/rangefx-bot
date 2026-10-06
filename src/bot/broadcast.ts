@@ -88,14 +88,23 @@ function unreachableReasonOf(
   return gone ? 'deleted' : null;
 }
 
-function deliver(api: Api, id: bigint, content: BroadcastContent): Promise<SafeResult<unknown>> {
+/**
+ * Send broadcast content to one chat. Formatting travels as entities /
+ * caption_entities only — parse_mode is deliberately never set, so the text is
+ * sent verbatim with nothing to escape. Also used for the admin preview, so the
+ * preview is byte-for-byte what recipients get.
+ */
+export function deliver(api: Api, id: bigint | number, content: BroadcastContent): Promise<SafeResult<unknown>> {
   return content.photoFileId
     ? safeCall('sendPhoto', () =>
         // A file_id, not a buffer: Telegram reuses the already-uploaded photo,
         // so nothing is re-uploaded and nothing is held in memory per send.
-        api.sendPhoto(Number(id), content.photoFileId!, { caption: content.caption }),
+        api.sendPhoto(Number(id), content.photoFileId!, {
+          caption: content.caption,
+          caption_entities: content.entities,
+        }),
       )
-    : safeSendMessage(api, id, content.text ?? '');
+    : safeSendMessage(api, id, content.text ?? '', { entities: content.entities });
 }
 
 /**

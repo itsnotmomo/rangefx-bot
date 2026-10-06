@@ -3,12 +3,14 @@ import {
   boolean,
   index,
   integer,
+  jsonb,
   pgTable,
   serial,
   text,
   timestamp,
   uniqueIndex,
 } from 'drizzle-orm/pg-core';
+import { type MessageEntity } from 'grammy/types';
 
 /**
  * Schema notes
@@ -181,6 +183,11 @@ export const broadcasts = pgTable('broadcasts', {
   kind: text('kind').notNull(),
   /** JSON: {"text":…} or {"photoFileId":…,"caption":…}. Survives a restart. */
   content: text('content').notNull(),
+  /**
+   * Telegram MessageEntity[] — message.entities for 'text', caption_entities for
+   * 'photo'. Null = no formatting. Sent back as entities, never with parse_mode.
+   */
+  entities: jsonb('entities').$type<MessageEntity[]>(),
   /** 'running' | 'completed' | 'interrupted' | 'cancelled'. */
   status: text('status').notNull().default('running'),
   total: integer('total').notNull().default(0),

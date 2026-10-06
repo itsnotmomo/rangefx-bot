@@ -23,6 +23,7 @@ import {
   activeBroadcastId,
   broadcastConcurrency,
   broadcastRate,
+  deliver,
   runBroadcast,
   summaryLines,
 } from './broadcast.js';
@@ -328,13 +329,17 @@ export function registerBroadcastFlow(bot: Bot): void {
     let content: BroadcastContent | null = null;
     const photo = ctx.message.photo;
     if (photo && photo.length > 0) {
-      content = { photoFileId: photo[photo.length - 1]!.file_id, caption: ctx.message.caption };
+      content = {
+        photoFileId: photo[photo.length - 1]!.file_id,
+        caption: ctx.message.caption,
+        entities: ctx.message.caption_entities,
+      };
     } else if (ctx.message.text) {
       if (ctx.message.text.startsWith('/')) {
         await ctx.reply('That looks like a command. Send the message content, or /cancel.');
         return;
       }
-      content = { text: ctx.message.text };
+      content = { text: ctx.message.text, entities: ctx.message.entities };
     }
 
     if (!content) {
@@ -345,12 +350,13 @@ export function registerBroadcastFlow(bot: Bot): void {
     state.content = content;
     state.step = 'confirm';
 
-    if (content.photoFileId) {
-      await safeCall('sendPhoto', () =>
-        ctx.api.sendPhoto(ctx.chat.id, content.photoFileId!, { caption: content.caption }),
-      );
-    } else {
-      await ctx.reply(content.text!);
+    // Same send path as the runner, so the preview matches what members get.
+    const preview = await deliver(ctx.api, ctx.chat.id, content);
+    if (!preview.ok) {
+      state.step = 'content';
+      state.content = undefined;
+      await ctx.reply(`Telegram rejected the preview (${preview.error}). Send the message again, or /cancel.`);
+      return;
     }
     await ctx.reply(
       `That's the preview above. Send to ${state.count} users at ${broadcastRate()}/sec (~${etaMinutes(state.count)})?`,

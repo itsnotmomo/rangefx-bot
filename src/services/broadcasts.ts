@@ -1,4 +1,5 @@
 import { and, asc, count, desc, eq, sql } from 'drizzle-orm';
+import { type MessageEntity } from 'grammy/types';
 import { db } from '../db/index.js';
 import { broadcastSends, broadcasts, type Broadcast } from '../db/schema.js';
 import { type AudienceKey } from './audience.js';
@@ -25,6 +26,11 @@ export interface BroadcastContent {
   text?: string;
   photoFileId?: string;
   caption?: string;
+  /**
+   * Formatting: entities of `text`, or of `caption` for a photo. Stored in its
+   * own column (broadcasts.entities), not in the content JSON.
+   */
+  entities?: MessageEntity[];
 }
 
 export interface CreateBroadcastInput {
@@ -41,14 +47,17 @@ export interface CreateBroadcastResult {
   created: boolean;
 }
 
-/** Parse the stored JSON payload back into content. Never throws. */
+/** Parse the stored JSON payload back into content, with its entities. Never throws. */
 export function contentOf(broadcast: Broadcast): BroadcastContent {
+  let parsed: BroadcastContent = {};
   try {
-    const parsed = JSON.parse(broadcast.content) as BroadcastContent;
-    return typeof parsed === 'object' && parsed !== null ? parsed : {};
+    const raw = JSON.parse(broadcast.content) as BroadcastContent;
+    if (typeof raw === 'object' && raw !== null) parsed = raw;
   } catch {
-    return {};
+    // fall through with empty content
   }
+  const entities = Array.isArray(broadcast.entities) ? broadcast.entities : undefined;
+  return { text: parsed.text, photoFileId: parsed.photoFileId, caption: parsed.caption, entities };
 }
 
 /**
@@ -57,12 +66,14 @@ export function contentOf(broadcast: Broadcast): BroadcastContent {
  * caller must NOT start a run.
  */
 export async function createBroadcast(input: CreateBroadcastInput): Promise<CreateBroadcastResult> {
+  const { entities, ...payload } = input.content;
   const [row] = await db
     .insert(broadcasts)
     .values({
       audience: input.audience,
       kind: input.content.photoFileId ? 'photo' : 'text',
-      content: JSON.stringify(input.content),
+      content: JSON.stringify(payload),
+      entities: entities && entities.length > 0 ? entities : null,
       status: 'running',
       createdBy: input.createdBy,
       idempotencyKey: input.idempotencyKey,
